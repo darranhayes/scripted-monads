@@ -52,3 +52,27 @@ getCustomerOrderTotal (fun _ -> Failure "Customer not found") (fun id -> OK { Id
 
 getCustomerOrderTotal (fun id -> OK { Id = id; MostRecentOrderId = 15 }) (fun id -> OK { Id = id; Total = 100 }) "hello world"
 |> print
+
+(* Computation expressions *)
+
+type EitherBuilder() =
+    member __.Bind(m, func) = Either.bind func m
+    member __.Return(m) = OK m
+
+let either = EitherBuilder()
+
+either {
+    let! id = tryParseInt "42"
+    let! customer = OK { Id = id; MostRecentOrderId = 15 }
+    let! order = OK { Id = customer.MostRecentOrderId; Total = 1000 }
+    return order.Total
+}
+|> print
+
+either {
+    let! id = tryParseInt "42"
+    let! _ = OK { Id = id; MostRecentOrderId = 15 }
+    let! order = Failure "Order not found"
+    return order.Total
+}
+|> print
