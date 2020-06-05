@@ -49,28 +49,29 @@ type Customer = { Id: int; Age: int Maybe }
 
 type CustomerRepository = int -> Customer Maybe
 
-let showCustomerAge (customerRepo: CustomerRepository) strCustomerId =
+let getCustomerAge (customerRepo: CustomerRepository) strCustomerId =
     tryParseInt strCustomerId
     |> Maybe.bind customerRepo
     |> Maybe.bind (fun cust -> cust.Age)
     |> Maybe.map isOld
 
-showCustomerAge (fun id -> Something { Id = id; Age = Something id }) "42"
+getCustomerAge (fun id -> Something { Id = id; Age = Something id }) "42"
 |> print
 
-showCustomerAge (fun id -> Something { Id = id; Age = Something id }) "35"
+getCustomerAge (fun id -> Something { Id = id; Age = Something id }) "35"
 |> print
 
-showCustomerAge (fun id -> Something { Id = id; Age = Nothing }) "42"
+getCustomerAge (fun id -> Something { Id = id; Age = Nothing }) "42"
 |> print
 
-showCustomerAge (fun _ -> Nothing) "42" |> print
+getCustomerAge (fun _ -> Nothing) "42"
+|> print
 
 (* Computation expressions *)
 
 type MaybeBuilder() =
     member __.Bind(m, func) = Maybe.bind func m
-    member __.Return(x) = Something x
+    member __.Return(m) = Something m
 
 let maybe = MaybeBuilder()
 
@@ -86,5 +87,19 @@ maybe {
     let! b = Nothing
     let! c = Something 10
     return (a + b + c)
+}
+|> print
+
+maybe {
+    let! customerId = tryParseInt "33"
+    let! customer = Something { Id = customerId; Age = Something customerId } // successful customer load
+    return (customer.Age)
+}
+|> print
+
+maybe {
+    let! customerId = tryParseInt "33"
+    let! customer = if (customerId > 40) then Something { Id = customerId; Age = Something customerId } else Nothing  // unsuccessful customer load
+    return (customer.Age)
 }
 |> print
