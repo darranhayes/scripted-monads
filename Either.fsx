@@ -7,7 +7,7 @@ type Either<'e, 't> =
 module Either =
     let map f m =
         match m with
-        | OK t -> OK (f t)
+        | OK t -> OK(f t)
         | Failure e -> Failure e
 
     let bind f m =
@@ -30,11 +30,11 @@ let tryParseInt (x: string) =
 
 type Error = string
 type Order = { Id: int; Total: int }
-type Customer = { Id: int; MostRecentOrderId : int }
+type Customer = { Id: int; MostRecentOrderId: int }
 type CustomerRepository = int -> Either<Error, Customer>
 type OrderRepository = int -> Either<Error, Order>
 
-let getCustomerOrderTotal (customerRepo: CustomerRepository) (orderRepo : OrderRepository) strCustomerId =
+let getCustomerOrderTotal (customerRepo: CustomerRepository) (orderRepo: OrderRepository) strCustomerId =
     tryParseInt strCustomerId
     |> Either.bind customerRepo
     |> Either.map (fun c -> c.MostRecentOrderId)
@@ -44,13 +44,14 @@ let getCustomerOrderTotal (customerRepo: CustomerRepository) (orderRepo : OrderR
 getCustomerOrderTotal (fun id -> OK { Id = id; MostRecentOrderId = 15 }) (fun id -> OK { Id = id; Total = 100 }) "1"
 |> print
 
-getCustomerOrderTotal (fun id -> OK { Id = id; MostRecentOrderId = 15 }) (fun _ -> Failure "Order not found" ) "1"
+getCustomerOrderTotal (fun id -> OK { Id = id; MostRecentOrderId = 15 }) (fun _ -> Failure "Order not found") "1"
 |> print
 
 getCustomerOrderTotal (fun _ -> Failure "Customer not found") (fun id -> OK { Id = id; Total = 100 }) "1"
 |> print
 
-getCustomerOrderTotal (fun id -> OK { Id = id; MostRecentOrderId = 15 }) (fun id -> OK { Id = id; Total = 100 }) "hello world"
+getCustomerOrderTotal (fun id -> OK { Id = id; MostRecentOrderId = 15 }) (fun id -> OK { Id = id; Total = 100 })
+    "hello world"
 |> print
 
 (* Computation expressions *)
@@ -64,7 +65,12 @@ let either = EitherBuilder()
 either {
     let! id = tryParseInt "42"
     let! customer = OK { Id = id; MostRecentOrderId = 15 }
-    let! order = OK { Id = customer.MostRecentOrderId; Total = 1000 }
+
+    let! order =
+        OK
+            { Id = customer.MostRecentOrderId
+              Total = 1000 }
+
     return order.Total
 }
 |> print

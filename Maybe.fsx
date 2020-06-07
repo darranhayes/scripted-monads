@@ -64,8 +64,7 @@ getCustomerAge (fun id -> Something { Id = id; Age = Something id }) "35"
 getCustomerAge (fun id -> Something { Id = id; Age = Nothing }) "42"
 |> print
 
-getCustomerAge (fun _ -> Nothing) "42"
-|> print
+getCustomerAge (fun _ -> Nothing) "42" |> print
 
 (* Computation expressions *)
 
@@ -92,14 +91,27 @@ maybe {
 
 maybe {
     let! customerId = tryParseInt "33"
-    let! customer = Something { Id = customerId; Age = Something customerId } // successful customer load
+
+    let! customer =
+        Something
+            { Id = customerId
+              Age = Something customerId } // successful customer load
+
     return (customer.Age)
 }
 |> print
 
 maybe {
     let! customerId = tryParseInt "33"
-    let! customer = if (customerId > 40) then Something { Id = customerId; Age = Something customerId } else Nothing  // unsuccessful customer load
+
+    let! customer =
+        if (customerId > 40) then
+            Something
+                { Id = customerId
+                  Age = Something customerId }
+        else
+            Nothing // unsuccessful customer load
+
     return (customer.Age)
 }
 |> print
