@@ -5,7 +5,7 @@ A collection of FSharp script files capturing my efforts to learn more F# and ga
 
 - [x] Maybe (aka option in F#)
 - [x] Either (aka result in F#)
-- [ ] State
+- [x] State
 
 ## Consumption styles explored
 

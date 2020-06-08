@@ -45,7 +45,9 @@ module State =
 type StateBuilder() =
     member this.Return x = State(fun s -> x, s)
     member this.ReturnFrom(x: State<'s, 'v>) = x
-    member this.Bind(m, func): State<'s, 'v> = State.bind func m
+    member this.Bind(m, func): State<'s, 'v> =
+        printfn "Bind f: %O, m: %O" func m
+        State.bind func m
 
 let state = StateBuilder()
 
