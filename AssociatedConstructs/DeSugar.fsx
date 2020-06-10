@@ -2,8 +2,8 @@
 
 type Delegate<'a, 'b> = Delegate of ('a -> 'b * 'a)
 
-let deSugar delegateInstance arg = // this function returns f(arg)
-    let (Delegate(f)) = delegateInstance in f arg
+let deSugar delegateInstance arg = // deSugar function returns 'a -> 'b * 'a
+    let (Delegate(f)) = delegateInstance in (f arg)
 
 let d = Delegate(fun x -> x.ToString(), x)
 
