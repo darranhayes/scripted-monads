@@ -7,10 +7,12 @@ type State<'a, 'b> = 'b * 'a
 
 module State =
     let run initialState stateM = stateM initialState |> fst
+
     let bind f stateM =
         fun state ->
             let result, newState = stateM state
             (f result) newState
+
     let get () = fun state -> State(state, state)
     let put s = fun _ -> State((), s)
 
@@ -22,6 +24,7 @@ type StateBuilder() =
 let state = StateBuilder()
 
 (* Examples *)
+
 let inc sM =
     sM
     |> State.bind (fun _ -> State.get ())

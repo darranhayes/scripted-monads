@@ -27,6 +27,7 @@ type StateBuilder() =
 let state = StateBuilder()
 
 (* Examples *)
+
 let inc sM =
     sM
     |> State.bind (fun _ -> State.get ())
