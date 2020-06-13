@@ -52,7 +52,7 @@ type CustomerRepository = int -> Customer Maybe
 let getCustomerAge (customerRepo: CustomerRepository) strCustomerId =
     tryParseInt strCustomerId
     |> Maybe.bind customerRepo
-    |> Maybe.bind (fun cust -> cust.Age)
+    |> Maybe.bind (fun customer -> customer.Age)
     |> Maybe.map isOld
 
 getCustomerAge (fun id -> Something { Id = id; Age = Something id }) "42"

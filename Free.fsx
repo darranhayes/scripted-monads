@@ -67,6 +67,7 @@ module BlogTesting =
             | Pure x -> f x
 
     open Implementation
+
     type BlogBuilder() =
         member this.Bind(x, f) = bind f x
         member this.Return x = Pure x
@@ -87,12 +88,8 @@ module BlogTesting =
         let rec interpreter =
             function
             | Pure x -> x
-            | Free (NewBlog (name, next)) ->
-                newBlog name
-                |> (next >> interpreter)
-            | Free (CreateAuthor (name, next)) ->
-                createAuthor name
-                |> (next >> interpreter)
+            | Free (NewBlog (name, next)) -> newBlog name |> (next >> interpreter)
+            | Free (CreateAuthor (name, next)) -> createAuthor name |> (next >> interpreter)
             | Free (NewBlogPost ((blogId, authorId, title), next)) ->
                 newPost blogId authorId title
                 |> (next >> interpreter)
@@ -103,27 +100,13 @@ module BlogTesting =
 
         let rec interpreter =
             function
-            | Pure x ->
-                async {
-                    return x
-                }
-            | Free (NewBlog (name, next)) ->
-                async {
-                    return!
-                        newBlog name
-                        |> (next >> interpreter)
-                }
-            | Free (CreateAuthor (name, next)) ->
-                async {
-                    return!
-                        createAuthor name
-                        |> (next >> interpreter)
-                }
+            | Pure x -> async { return x }
+            | Free (NewBlog (name, next)) -> async { return! newBlog name |> (next >> interpreter) }
+            | Free (CreateAuthor (name, next)) -> async { return! createAuthor name |> (next >> interpreter) }
             | Free (NewBlogPost ((blogId, authorId, title), next)) ->
                 async {
-                    return!
-                        newPost blogId authorId title
-                        |> (next >> interpreter)
+                    return! newPost blogId authorId title
+                            |> (next >> interpreter)
                 }
 
 let blogTest = BlogTesting.BlogBuilder()
@@ -139,5 +122,10 @@ let simpleProgram =
         return (newAuthor, createdBlog, newPost)
     }
 
-let result = simpleProgram |> BlogTesting.FastTests.interpreter
-let asyncResult = simpleProgram |> BlogTesting.AsyncTests.interpreter |> Async.RunSynchronously
+let result =
+    simpleProgram |> BlogTesting.FastTests.interpreter
+
+let asyncResult =
+    simpleProgram
+    |> BlogTesting.AsyncTests.interpreter
+    |> Async.RunSynchronously
