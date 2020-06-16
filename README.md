@@ -10,7 +10,7 @@ A collection of FSharp script files capturing my efforts to deepen F#, functiona
 - [x] DSL Monad + Interpreter
 - [x] DSL Free Monad + Interpreter
 - [ ] Reader
-- [ ] Applicative
+- [x] Applicative
 
 ## Consumption styles explored
 
