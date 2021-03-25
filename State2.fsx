@@ -1,57 +1,74 @@
 ﻿(*
-Goal: implement state monad as per https://wiki.haskell.org/State_Monad
+Goal: implement state monad influenced by https://wiki.haskell.org/State_Monad
 http://matthewmanela.com/blog/functional-stateful-program-in-f/
 *)
 
-type State<'a, 'b> = 'b * 'a
+type State<'s, 'a> = 'a * 's
 
 module State =
-    let run initialState stateM = stateM initialState |> fst
+    /// return - construct a stateful computation with the value x
+    let ret (x : 'a) : 's -> State<'s, 'a> =
+        fun s -> State(x, s)
 
-    let bind f stateM =
+    let get () =
+        fun state -> State(state, state)
+
+    let put s  =
+        fun _ -> State((), s)
+
+    /// applies the initial state to the computation m
+    let inline run state (m : 's -> State<'s, 'a>) =
+        m state
+
+    let bind (f : 'a -> 's -> State<'s, 'b>) (m : 's -> State<'s, 'a>) : 's -> State<'s, 'b> =
         fun state ->
-            let result, newState = stateM state
+            let result, newState = m state
             (f result) newState
 
-    let get () = fun state -> State(state, state)
-    let put s = fun _ -> State((), s)
+    let map (f : 'a -> 'b) (m : 's -> State<'s, 'a>) : 's -> State<'s, 'b> =
+        bind (f >> ret) m
 
 type StateBuilder() =
-    member this.Return x = fun s -> State(x, s)
-    member this.ReturnFrom x = x
-    member this.Bind(stateM, func) = State.bind func stateM
+    member this.Return (x : 'a) : 's -> State<'s, 'a> =
+        State.ret x
+    member this.ReturnFrom x =
+        x
+    member this.Bind(m, f) =
+        State.bind f m
 
 let state = StateBuilder()
 
+let (>>=) m f = State.bind f m
+let (<!>) m f = State.map f m
+
 (* Examples *)
 
-let inc sM =
-    sM
-    |> State.bind (fun _ -> State.get ())
-    |> State.bind (fun x -> State.put (x + 1))
+let op x y =
+    State.get ()
+    >>= (fun s -> State.put (s + 1)) // track the number of operations performed
+    >>= (fun _ -> State.ret (x + y))
 
-let explicitSimpleProgram =
-    (fun x -> State(x, x))
-    |> inc
-    |> inc
-    |> State.bind (fun _ -> State.get ())
+let explicitSimpleProgram (initialValue : int) =
+    op initialValue 5
+    >>= (fun a -> op a 7)
+    <!> (fun b -> 1000 - b) // no stateful effects from this calculation, use map <!> instead of bind >>=
+    >>= (fun c -> State.ret (sprintf "Calculation result is %i" c))
 
-explicitSimpleProgram |> State.run 1
+explicitSimpleProgram 100 |> State.run 0
 
-let ceSimpleProgram =
+
+let ceSimpleProgram (initialValue : int) =
     state {
-        let! x = State.get ()
-        do! State.put (x + 1)
-        let! y = State.get ()
-        do! State.put (y + 1)
-        return! State.get ()
+        let! a = op initialValue 5
+        let! b = op a 7
+        let c = 1000 - b // no stateful effects from this calculation, use let instead of let!
+        return (sprintf "Calculation result is %i" c)
     }
 
-ceSimpleProgram |> State.run 1
+ceSimpleProgram 100 |> State.run 0
 
 type GameState = bool * int
 let gameString = "abcaaacbbcabbab"
-let initialState = (false, 0)
 let toString (xs: char list) = xs |> Seq.toArray |> System.String
 
 let updateScore c =
@@ -74,4 +91,4 @@ let rec playGame str =
             return! playGame (xs |> toString)
     }
 
-playGame gameString |> State.run initialState
+playGame gameString |> State.run (false, 0)
