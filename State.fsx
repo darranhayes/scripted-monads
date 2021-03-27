@@ -93,3 +93,55 @@ let rec playGame str =
     }
 
 playGame gameString |> State.run (false, 0)
+
+// Example expansion of a simple stateful computation
+// Each step can be evaluated interactively
+let cmp = State.get() >>= (fun x -> State.put (x + 1))
+State.run 1 cmp
+
+// substitute cmp for its value
+State.run 1 (State(fun s -> s, s) >>= (fun x -> State(fun _ -> (), (x + 1))))
+
+// expand (>>=), and substitute 'run' for resolved call to State.run
+State.run 1 (State(fun state ->
+    let result, newState = State.run state (State(fun s -> s, s))
+    State.run newState ((fun x -> State(fun _ -> (), (x + 1))) result)
+))
+
+// expand State.run 1
+(fun state ->
+    let result, newState = State.run state (State(fun s -> s, s))
+    State.run newState ((fun x -> State(fun _ -> (), (x + 1))) result)) 1
+
+// apply 1 to lambda arg 'state' and evaluate
+let result, newState = State.run 1 (State(fun s -> s, s))
+State.run newState ((fun x -> State(fun _ -> (), (x + 1))) result)
+
+// expand State.run 1
+let result', newState' = (fun s -> s, s) 1
+State.run newState' ((fun x -> State(fun _ -> (), (x + 1))) result')
+
+// calculate result'' & newState''
+let result'', newState'' = 1,1
+State.run newState'' ((fun x -> State(fun _ -> (), (x + 1))) result'')
+
+// reduce State.run newState' ...
+State.run 1 ((fun x -> State(fun _ -> (), (x + 1))) 1)
+
+// apply 1 to lambda arg 'x'
+State.run 1 (State(fun _ -> (), (1 + 1)))
+
+// Expand State.run 1
+(fun _ -> (), (1 + 1)) 1
+(), (1 + 1)
+(), 2
+
+type F1<'s, 'a> = int -> State<'s, 'a>
+type F2<'s, 'a> = string -> State<'s, 'a>
+
+let intToString : F1<'s, string> = fun v -> State.ret(v.ToString())
+let stringLength : F2<'s, int> = fun v -> State.ret(v.Length)
+
+let program i = State.ret i >>= intToString >>= stringLength
+State.run "" (program 5)
+
