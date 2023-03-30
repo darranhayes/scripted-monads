@@ -7,64 +7,81 @@ module FList =
     let ofArray ([<System.ParamArray>] paramArray: 'a[]) =
         let rec listBuilder (arr: 'a array) index acc =
             match index with
-            | 0 -> Cons(arr[0], acc)
-            | idx -> listBuilder arr (idx - 1) (Cons(arr[idx], acc))
+            | 0 ->
+                Cons(arr[0], acc)
+            | idx ->
+                listBuilder arr (idx - 1) (Cons(arr[idx], acc))
         listBuilder paramArray (paramArray.Length - 1) Empty
 
     let toString list =
         let rec render list acc =
             match list with
-            | Empty -> acc
-            | Cons (head, Empty) -> acc + head.ToString()
-            | Cons (head, tail) -> render tail (acc + head.ToString() + "; ")
+            | Empty ->
+                acc
+            | Cons (head, Empty) ->
+                acc + head.ToString()
+            | Cons (head, tail) ->
+                render tail (acc + head.ToString() + "; ")
         sprintf "[ %s ]" (render list "")
 
-    let head list =
-        match list with
-        | Empty -> failwith "Cannot take the head of an empty list"
-        | Cons (i, l) -> i
+    let head = function
+        | Empty ->
+            failwith "Cannot take the head of an empty list"
+        | Cons (h, _) ->
+            h
 
-    let tail list =
-        match list with
-        | Empty -> Empty
-        | Cons (_, l) -> l
+    let tail = function
+        | Empty ->
+            Empty
+        | Cons (_, ts) ->
+            ts
 
     let length list =
-        let rec length' list acc =
+        let rec loop list acc =
             match list with
-            | Empty -> acc
-            | Cons(head, tail) -> length' tail (1 + acc)
-        length' list 0
+            | Empty ->
+                acc
+            | Cons(_, tail) ->
+                loop tail (1 + acc)
+        loop list 0
 
     let reverse list =
-        let rec reverse' list acc =
+        let rec loop list acc =
             match list with
-            | Empty -> acc
-            | Cons(head, tail) -> reverse' tail (Cons(head, acc))
-        reverse' list Empty
+            | Empty ->
+                acc
+            | Cons(head, tail) ->
+                loop tail (Cons(head, acc))
+        loop list Empty
 
     let concat lista listb =
-        let rec concat' lista listb acc =
+        let rec loop k lista listb =
             match lista, listb with
-            | Empty, Empty -> acc
-            | Empty, ys -> concat' ys Empty acc
-            | Cons(x, xs), ys -> concat' xs ys (Cons(x, acc))
-        concat' lista listb Empty |> reverse
+            | Empty, Empty ->
+                k Empty
+            | Empty, ys ->
+                k ys
+            | Cons(x, xs), ys ->
+                loop (fun acc -> k (Cons(x, acc))) xs ys
+        loop id lista listb
 
     let flatten lists =
-        let rec flatten' lists acc =
+        let rec loop k lists =
             match lists with
-            | Empty -> acc
-            | Cons(x, xs) -> flatten' xs (concat x acc)
-        flatten' (lists |> reverse) Empty
+            | Empty ->
+                k Empty
+            | Cons(x, xs) ->
+                loop (fun acc -> k (concat x acc)) xs
+        loop id lists
 
     let map (fn: 'a -> 'b) list =
-        let rec map' fn list acc =
+        let rec loop k list =
             match list with
-            | Empty -> acc
+            | Empty ->
+                k Empty
             | Cons (head, tail) ->
-                map' fn tail (Cons (fn head, acc))
-        map' fn list Empty |> reverse
+                loop (fun acc -> k (Cons(fn head, acc))) tail
+        loop id list
 
     let bind (fn: 'a -> FList<'b>) list =
         flatten (map fn list)
@@ -128,3 +145,14 @@ flist {
     for i in 0..5..10 do
         yield! Cons(i + 5, Cons(i + 6, Empty))
 } |> FList.toString
+
+let lista = Cons(1, Cons(2, Cons(3, Empty)))
+let listb = lista |> FList.map (fun x -> x + 10)
+let listc = FList.concat lista listb
+
+listc |> FList.length
+
+let listd = Cons(100, Cons(200, Cons(300, Cons(400, Empty))))
+
+let ll = Cons(lista, Cons(listb, Cons(listd, Empty)))
+ll |> FList.flatten |> FList.reverse |> FList.toString

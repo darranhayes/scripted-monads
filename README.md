@@ -12,6 +12,7 @@ A collection of FSharp script files capturing my efforts to deepen F#, functiona
 - [x] Reader
 - [x] Flexible Types (#IInterface)
 - [x] Applicative
+- [x] FList (aka List in F#)
 
 ## Consumption styles explored
 
@@ -19,3 +20,4 @@ A collection of FSharp script files capturing my efforts to deepen F#, functiona
 - Pipe operator
 - Computation expressions
 - Kleisli composition operator
+- Continuation Passing Style (CPS)
