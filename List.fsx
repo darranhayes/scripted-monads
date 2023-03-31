@@ -1,127 +1,162 @@
-
 type FList<'a> =
     | Empty
     | Cons of head: 'a * tail: FList<'a>
 
 module FList =
-    let ofArray ([<System.ParamArray>] paramArray: 'a[]) =
-        let rec listBuilder (arr: 'a array) index acc =
-            match index with
-            | 0 ->
-                Cons(arr[0], acc)
-            | idx ->
-                listBuilder arr (idx - 1) (Cons(arr[idx], acc))
-        listBuilder paramArray (paramArray.Length - 1) Empty
+    type private ContinuationMonad() =
+        member __.Bind(m, f) = fun c -> m (fun a -> f a c)
+        member __.Return(x) = fun k -> k x
+        member this.Delay(mk) = fun c -> mk () c
 
-    let toString list =
-        let rec render list acc =
+    let private cont = ContinuationMonad()
+
+    let ofSeq (sequence: seq<'a>) : FList<'a> =
+        let folder s i =
+            Cons(i, s)
+
+        Seq.fold folder Empty sequence
+
+    let rec toSeq (list: FList<'a>) : seq<'a> =
+        seq {
             match list with
             | Empty ->
-                acc
-            | Cons (head, Empty) ->
-                acc + head.ToString()
-            | Cons (head, tail) ->
-                render tail (acc + head.ToString() + "; ")
-        sprintf "[ %s ]" (render list "")
+                yield! Seq.empty
+            | Cons(x, xs) ->
+                yield x
+                yield! toSeq xs
+        }
 
-    let head = function
+    let head (list: FList<'a>) : 'a =
+        match list with
         | Empty ->
             failwith "Cannot take the head of an empty list"
-        | Cons (h, _) ->
-            h
+        | Cons (x, _) ->
+            x
 
-    let tail = function
+    let tail (list: FList<'a>) : FList<'a> =
+        match list with
         | Empty ->
             Empty
-        | Cons (_, ts) ->
-            ts
+        | Cons (_, xs) ->
+            xs
 
-    let length list =
-        let rec loop list acc =
+    let fold (f: 'State -> 'T -> 'State) (state: 'State) (list: FList<'T>) : 'State =
+        let rec loop state list =
             match list with
             | Empty ->
-                acc
-            | Cons(_, tail) ->
-                loop tail (1 + acc)
-        loop list 0
-
-    let reverse list =
-        let rec loop list acc =
-            match list with
-            | Empty ->
-                acc
-            | Cons(head, tail) ->
-                loop tail (Cons(head, acc))
-        loop list Empty
-
-    let concat lista listb =
-        let rec loop k lista listb =
-            match lista, listb with
-            | Empty, Empty ->
-                k Empty
-            | Empty, ys ->
-                k ys
-            | Cons(x, xs), ys ->
-                loop (fun acc -> k (Cons(x, acc))) xs ys
-        loop id lista listb
-
-    let flatten lists =
-        let rec loop k lists =
-            match lists with
-            | Empty ->
-                k Empty
+                state
             | Cons(x, xs) ->
-                loop (fun acc -> k (concat x acc)) xs
-        loop id lists
+                loop (f state x) xs
+        loop state list
 
-    let map (fn: 'a -> 'b) list =
-        let rec loop k list =
-            match list with
-            | Empty ->
-                k Empty
-            | Cons (head, tail) ->
-                loop (fun acc -> k (Cons(fn head, acc))) tail
-        loop id list
+    let foldBack (f: 'T -> 'State -> 'State) (list: 'T FList) (state: 'State) : 'State =
+        let rec loop list =
+            cont {
+                match list with
+                | Empty ->
+                    return state
+                | Cons(x, xs) ->
+                    let! newState = loop xs
+                    return f x newState
+            }
+        loop list id
 
-    let bind (fn: 'a -> FList<'b>) list =
+    let rec reduce (f: 'a -> 'a -> 'a) (list: FList<'a>) : 'a =
+        match list with
+        | Empty ->
+            failwith "Cannot reduce an empty list"
+        | Cons(x, Empty) ->
+            x
+        | Cons(x, xs) ->
+            fold f x xs
+
+    let rec tryReduce (f: 'a -> 'a -> 'a) (list: FList<'a>) : 'a option =
+        match list with
+        | Empty ->
+            None
+        | _ ->
+            reduce f list |> Some
+
+    let min (list: FList<'a>) : 'a =
+        reduce min list
+
+    let max (list: FList<'a>) : 'a =
+        reduce max list
+
+    let length =
+        let inc length = fun _ -> length + 1
+        fold inc 0
+
+    let reverse =
+        let cons s i = Cons(i, s)
+        fold cons Empty
+
+    let concat (list1: FList<'a>) (list2: FList<'a>) : FList<'a> =
+        let cons i s = Cons(i, s)
+        foldBack cons list1 list2
+
+    let flatten (lists: FList<FList<'a>>) : FList<'a> =
+        foldBack concat lists Empty
+
+    let map (fn: 'a -> 'b) (list: FList<'a>) : FList<'b> =
+        let rec loop list =
+            cont {
+                match list with
+                | Empty ->
+                    return Empty
+                | Cons (x, xs) ->
+                    let y = fn x
+                    let! ys = loop xs
+                    return Cons(y, ys)
+            }
+
+        loop list id
+
+    let bind (fn: 'a -> FList<'b>) (list: FList<'a>) : FList<'b> =
         flatten (map fn list)
 
-(* Computation Expressions *)
+    let toString (list: FList<'a>) : string =
+        list
+        |> map (fun i -> i.ToString())
+        |> toSeq
+        |> String.concat "; "
+        |> sprintf "[ %s ]"
 
-type FListBuilder() =
-    member this.Return(x) =
-        FList.Cons(x, FList.Empty)
+    (* Computation Expression *)
+    type Builder() =
+        member this.Return(x) =
+            Cons(x, Empty)
 
-    member this.ReturnFrom(x) =
-        x
+        member this.ReturnFrom(x) =
+            x
 
-    member this.Yield(x) =
-        this.Return(x)
+        member this.Yield(x) =
+            this.Return(x)
 
-    member this.YieldFrom(x) =
-        x
+        member this.YieldFrom(x) =
+            x
 
-    member this.Zero() =
-        this.Return ()
+        member this.Zero() =
+            this.Return ()
 
-    member this.Bind(m, fn) =
-        FList.bind fn m
+        member this.Bind(m, fn) =
+            bind fn m
 
-    /// accept FList.Cons(...) in for declarations
-    member this.For(m: FList<_>, fn) =
-        this.Bind(m, fn)
+        /// accept FList.Cons(...) in for declarations
+        member this.For(m: FList<_>, fn) =
+            this.Bind(m, fn)
 
-    /// accept sequences/ranges in for declarations
-    member this.For(m: seq<_>, fn) =
-        let list = FList.ofArray (Seq.toArray m)
-        this.Bind(list, fn)
+        /// accept sequences/ranges in for declarations
+        member this.For(m: seq<_>, fn) =
+            let list = ofSeq m
+            this.Bind(list, fn)
 
-let flist = FListBuilder()
+let flist = FList.Builder()
 
 flist {
     let! x = Cons('a', Cons('b', Empty))
     let! y = Cons(1, Cons(2, Empty))
-    let! z = [| '*'; '_'; '/' |] |> FList.ofArray
+    let! z = [| '*'; '_'; '/' |] |> FList.ofSeq
     return (x, y, z)
 }
 
@@ -150,9 +185,32 @@ let lista = Cons(1, Cons(2, Cons(3, Empty)))
 let listb = lista |> FList.map (fun x -> x + 10)
 let listc = FList.concat lista listb
 
+listc |> FList.toSeq
+
 listc |> FList.length
 
 let listd = Cons(100, Cons(200, Cons(300, Cons(400, Empty))))
 
+let listSum =
+    Cons(100, Cons(200, Cons(300, Cons(400, Empty))))
+    |> FList.fold (+) 0
+
+
 let ll = Cons(lista, Cons(listb, Cons(listd, Empty)))
-ll |> FList.flatten |> FList.reverse |> FList.toString
+ll |> FList.flatten |> FList.reverse |> (FList.map (fun x -> x * 3)) |> FList.toString
+
+let random =
+    let r = System.Random()
+    fun () -> r.Next()
+
+let la = seq { for i in 1..500_000 -> random () } |> FList.ofSeq
+
+let lb = la |> FList.map (fun i -> i / 2)
+
+let lc = la |> FList.map (fun i -> i / 3)
+
+let ld =  FList.concat lb lc
+
+ld |> FList.min
+ld |> FList.max
+ld |> FList.length
