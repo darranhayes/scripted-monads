@@ -13,6 +13,9 @@ A collection of FSharp script files capturing my efforts to deepen F#, functiona
 - [x] Flexible Types (#IInterface)
 - [x] Applicative
 - [x] FList (aka List in F#)
+- [x] Continuation
+- [x] Parser
+- [ ] IO
 
 ## Consumption styles explored
 

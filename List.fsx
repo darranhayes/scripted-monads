@@ -1,15 +1,11 @@
+#load "Continuation.fsx"
+open Continuations
+
 type FList<'a> =
     | Empty
     | Cons of head: 'a * tail: FList<'a>
 
 module FList =
-    type private ContinuationMonad() =
-        member __.Bind(m, f) = fun c -> m (fun a -> f a c)
-        member __.Return(x) = fun k -> k x
-        member this.Delay(mk) = fun c -> mk () c
-
-    let private cont = ContinuationMonad()
-
     let ofSeq (sequence: seq<'a>) : FList<'a> =
         let folder s i =
             Cons(i, s)
@@ -59,7 +55,7 @@ module FList =
                     let! newState = loop xs
                     return f x newState
             }
-        loop list id
+        loop list |> Cont.eval
 
     let rec reduce (f: 'a -> 'a -> 'a) (list: FList<'a>) : 'a =
         match list with
@@ -83,13 +79,13 @@ module FList =
     let max (list: FList<'a>) : 'a =
         reduce max list
 
-    let length =
+    let length (list: FList<'a>) : int =
         let inc length = fun _ -> length + 1
-        fold inc 0
+        fold inc 0 list
 
-    let reverse =
+    let reverse (list: FList<'a>) : FList<'a> =
         let cons s i = Cons(i, s)
-        fold cons Empty
+        fold cons Empty list
 
     let concat (list1: FList<'a>) (list2: FList<'a>) : FList<'a> =
         let cons i s = Cons(i, s)
@@ -110,7 +106,7 @@ module FList =
                     return Cons(y, ys)
             }
 
-        loop list id
+        loop list |> Cont.eval
 
     let bind (fn: 'a -> FList<'b>) (list: FList<'a>) : FList<'b> =
         flatten (map fn list)
