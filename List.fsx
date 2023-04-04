@@ -9,6 +9,9 @@ module FList =
     let ret x =
         Cons(x, Empty)
 
+    let cons x xs =
+        Cons(x, xs)
+
     let ofSeq (sequence: seq<'a>) : FList<'a> =
         let folder i s =
             Cons(i, s)
@@ -122,20 +125,39 @@ module FList =
 
     let (++) = concat
 
-    let take n list =
+    let tryTake (n: int) (list: FList<'a>) : FList<'a> option =
         let rec loop list i =
             cont {
                 match list with
+                // input list is too short
+                | Empty when i < n ->
+                    return None
+                // input list is the right length
                 | Empty ->
-                    return Empty
-                | Cons(x, xs) ->
-                    if i < n then
-                        let! ys = loop xs (i + 1)
-                        return Cons(x, ys)
-                    else
-                        return Empty
+                    return Some Empty
+                // still taking elements, add to output list
+                | Cons(x, xs) when i < n ->
+                    let! ys = loop xs (i + 1)
+                    return Option.map (cons x) ys
+                // finish taking elements
+                | _ ->
+                    return Some Empty
             }
         loop list 0 |> Cont.eval
+
+    let trySkip (n: int) (list: FList<'a>) : FList<'a> option =
+        let rec loop list i : FList<'a> option =
+            match list with
+            // input list is too short
+            | Empty ->
+                None
+            // still skipping items
+            | Cons(_, xs) when i < n ->
+                loop xs (i + 1)
+            // finished skipping items, return remaining list items
+            | xs ->
+                xs |> Some
+        loop list 0
 
     let flatten (lists: FList<FList<'a>>) : FList<'a> =
         foldBack concat lists Empty
@@ -333,3 +355,8 @@ FList.scanBack (fun charge acc ->
     | Out o -> acc - o) inputs 0
 
 FList.scanBack (+) (seq { 1; 2;3 } |> FList.ofSeq) 0
+
+seq { 1 .. 1_000_000 }
+|> FList.ofSeq
+|> FList.trySkip 900_500
+|> Option.bind (FList.tryTake 5)
