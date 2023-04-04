@@ -10,10 +10,10 @@ module FList =
         Cons(x, Empty)
 
     let ofSeq (sequence: seq<'a>) : FList<'a> =
-        let folder s i =
+        let folder i s =
             Cons(i, s)
 
-        Seq.fold folder Empty sequence
+        Seq.foldBack folder sequence Empty
 
     let rec toSeq (list: FList<'a>) : seq<'a> =
         seq {
@@ -39,26 +39,34 @@ module FList =
         | Cons (_, xs) ->
             xs
 
-    let fold (f: 'State -> 'T -> 'State) (state: 'State) (list: FList<'T>) : 'State =
+    let fold (f: 'State -> 'a -> 'State) (initialState: 'State) (list: FList<'a>) : 'State =
         let rec loop state list =
             match list with
             | Empty ->
                 state
             | Cons(x, xs) ->
                 loop (f state x) xs
-        loop state list
+        loop initialState list
 
-    let foldBack (f: 'T -> 'State -> 'State) (list: 'T FList) (state: 'State) : 'State =
+    let foldBack (f: 'a -> 'State -> 'State) (list: FList<'a>) (initialState: 'State) : 'State =
         let rec loop list =
             cont {
                 match list with
                 | Empty ->
-                    return state
+                    return initialState
                 | Cons(x, xs) ->
                     let! newState = loop xs
                     return f x newState
             }
         loop list |> Cont.eval
+
+    let length (list: FList<'a>) : int =
+        let inc length = fun _ -> length + 1
+        fold inc 0 list
+
+    let reverse (list: FList<'a>) : FList<'a> =
+        let cons s i = Cons(i, s)
+        fold cons Empty list
 
     let rec reduce (f: 'a -> 'a -> 'a) (list: FList<'a>) : 'a =
         match list with
@@ -82,13 +90,31 @@ module FList =
     let max (list: FList<'a>) : 'a =
         reduce max list
 
-    let length (list: FList<'a>) : int =
-        let inc length = fun _ -> length + 1
-        fold inc 0 list
+    let scan (f: 'State -> 'a -> 'State) (initialState: 'State) (list: FList<'a>) : FList<'State> =
+        let rec loop state list =
+            cont {
+                match list with
+                | Empty ->
+                    return ret state
+                | Cons(x, xs) ->
+                    let! ys = loop (f state x) xs
+                    return (Cons(state, ys))
+            }
+        loop initialState list |> Cont.eval
 
-    let reverse (list: FList<'a>) : FList<'a> =
-        let cons s i = Cons(i, s)
-        fold cons Empty list
+    let scanBack (f: 'a -> 'State -> 'State) (list: 'a FList) (initialState: 'State) : FList<'State> =
+        let rec loop list state =
+            cont {
+                match list with
+                | Empty ->
+                    return ret initialState
+                | Cons(x, xs) ->
+                    let! ys = loop xs state
+                    let q = head ys
+                    let y = f x q
+                    return (Cons(y, ys))
+            }
+        loop list initialState |> Cont.eval
 
     let concat (list1: FList<'a>) (list2: FList<'a>) : FList<'a> =
         let cons i s = Cons(i, s)
@@ -275,7 +301,35 @@ let ld =  FList.concat lb lc
 ld |> FList.min
 ld |> FList.max
 ld |> FList.length
-ld |> FList.sort |> FList.length
+ld |> FList.sort |> FList.toSeq
 
 seq { 20..-1..1 } |> FList.ofSeq |> FList.sort
 seq { 20..-1..1 } |> FList.ofSeq |> FList.sortDescending
+
+let transactions =
+    seq {
+        -100.00
+        450.34
+        -62.34
+        -127.00
+        -13.50
+        -12.92
+    }
+    |> FList.ofSeq
+
+FList.scan (+) 1122.73 transactions |> FList.toSeq |> Seq.toArray
+
+type Charge =
+    | In of int
+    | Out of int
+
+let inputs =
+    [ In 1; Out 2; In 3 ]
+    |> FList.ofSeq
+
+FList.scanBack (fun charge acc ->
+    match charge with
+    | In i -> acc + i
+    | Out o -> acc - o) inputs 0
+
+FList.scanBack (+) (seq { 1; 2;3 } |> FList.ofSeq) 0
