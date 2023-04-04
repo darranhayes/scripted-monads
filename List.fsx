@@ -63,6 +63,18 @@ module FList =
             }
         loop list |> Cont.eval
 
+    let unfold (generator: 'State -> ('a * 'State) option) (initialState: 'State) : FList<'a> =
+        let rec loop state =
+            cont {
+                match generator state with
+                | Some (i, s) ->
+                    let! xs = loop s
+                    return Cons(i, xs)
+                | None ->
+                    return Empty
+            }
+        loop initialState |> Cont.eval
+
     let length (list: FList<'a>) : int =
         let inc length = fun _ -> length + 1
         fold inc 0 list
@@ -360,3 +372,20 @@ seq { 1 .. 1_000_000 }
 |> FList.ofSeq
 |> FList.trySkip 900_500
 |> Option.bind (FList.tryTake 5)
+
+let xonacci takeN initialState =
+    let generator (list, total) =
+        if total <= takeN then
+            let x = FList.head list
+            let xs = FList.tail list
+            let sum = FList.reduce (+) list
+            let newList =
+                FList.concat xs (FList.ret sum)
+            let newTotal = total + 1
+            Some (x, (newList, newTotal))
+        else
+            None
+    FList.unfold generator (initialState, 0)
+
+Cons(0, Cons(1, Empty)) |> xonacci 30 |> FList.toString
+Cons(0, Cons(0, Cons(0, Cons(0, Cons(1, Empty))))) |> xonacci 30 |> FList.toString
