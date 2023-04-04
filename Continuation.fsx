@@ -23,6 +23,9 @@ module Cont =
         member this.Return (f: 'a) : Cont<'a, 'b> =
             ret f
 
+        member this.ReturnFrom f =
+            f
+
         member this.Delay (f: unit -> Cont<'a, 'b>) : Cont<'a, 'b> =
             delay f
 

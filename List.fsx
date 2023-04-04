@@ -6,6 +6,9 @@ type FList<'a> =
     | Cons of head: 'a * tail: FList<'a>
 
 module FList =
+    let ret x =
+        Cons(x, Empty)
+
     let ofSeq (sequence: seq<'a>) : FList<'a> =
         let folder s i =
             Cons(i, s)
@@ -91,8 +94,70 @@ module FList =
         let cons i s = Cons(i, s)
         foldBack cons list1 list2
 
+    let (++) = concat
+
+    let take n list =
+        let rec loop list i =
+            cont {
+                match list with
+                | Empty ->
+                    return Empty
+                | Cons(x, xs) ->
+                    if i < n then
+                        let! ys = loop xs (i + 1)
+                        return Cons(x, ys)
+                    else
+                        return Empty
+            }
+        loop list 0 |> Cont.eval
+
     let flatten (lists: FList<FList<'a>>) : FList<'a> =
         foldBack concat lists Empty
+
+    let filter (predicate: 'a -> bool) (list: FList<'a>) : FList<'a> =
+        let rec loop list =
+            cont {
+                match list with
+                | Empty ->
+                    return Empty
+                | Cons(x, xs) ->
+                    if predicate x then
+                        let! ys = loop xs
+                        return Cons(x, ys)
+                    else
+                        return! loop xs
+            }
+        loop list |> Cont.eval
+
+    let partition (predicate: 'a -> bool) (list: FList<'a>) : FList<'a> * FList<'a> =
+        let rec loop list (accLeft) (accRight) =
+            match list with
+            | Empty ->
+                accLeft, accRight
+            | Cons(x, xs) ->
+                if predicate x then
+                    loop xs (Cons(x, accLeft)) accRight
+                else
+                    loop xs accLeft (Cons(x, accRight))
+        loop list Empty Empty
+
+    let private sort' (predicate: 'a -> 'a -> bool) (list: FList<'a>) : FList<'a> =
+        let rec quicksort list =
+            match list with
+            | Empty ->
+                Empty
+            | Cons(x, xs) ->
+                let left, right =
+                    xs
+                    |> partition (predicate x)
+                quicksort left ++ ret x ++ quicksort right
+        quicksort list
+
+    let sort (list: FList<'a>) : FList<'a> =
+        sort' (fun x i -> i <= x) list
+
+    let sortDescending (list: FList<'a>) : FList<'a> =
+        sort' (fun x i -> i > x) list
 
     let map (fn: 'a -> 'b) (list: FList<'a>) : FList<'b> =
         let rec loop list =
@@ -121,7 +186,7 @@ module FList =
     (* Computation Expression *)
     type Builder() =
         member this.Return(x) =
-            Cons(x, Empty)
+            ret x
 
         member this.ReturnFrom(x) =
             x
@@ -210,3 +275,7 @@ let ld =  FList.concat lb lc
 ld |> FList.min
 ld |> FList.max
 ld |> FList.length
+ld |> FList.sort |> FList.length
+
+seq { 20..-1..1 } |> FList.ofSeq |> FList.sort
+seq { 20..-1..1 } |> FList.ofSeq |> FList.sortDescending
