@@ -52,21 +52,43 @@ let returnP (x: 'a) : Parser<'a> =
         Success (x, input)
     Parser innerFn
 
-/// Compose two parsers so that the execute one after the other
+/// unwrap function in fp and apply it to the value in xP
+let applyP (fP: Parser<'a -> 'b>) (xP: Parser<'a>) : Parser<'b> =
+    andThen fP xP
+    |> mapP (fun (f, x) -> f x)
+
+/// andThen
 let (.>>.) = andThen
 
-/// Execute one parser and if it fails execute the other instead
+/// orElse
 let (<|>) = orElse
 
-/// Apply function f to the results of the executed parser
+/// mapP
 let (<!>) = mapP
+
+/// applyP
+let (<*>) = applyP
 
 /// Pipe parser to mapP
 let (|>>) (x: Parser<'a>) (f:'a -> 'b) : Parser<'b> =
     mapP f x
 
+/// retain result of left parser
+let (.>>) (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'a> =
+    p1 .>>. p2
+    |>> (fun (x, y) -> x)
+
+/// retain the result of right parser
+let (>>.) (p1: Parser<'a>) (p2: Parser<'a>) : Parser<'b> =
+    p1 .>>. p2
+    |>> (fun (x, y) -> y)
+
 let choice (listOfParsers: Parser<'a> list) : Parser<'a> =
     List.reduce (<|>) listOfParsers
+
+/// lift binary functions and apply to parsers
+let lift2 (f: 'a -> 'b -> 'c) (xP: Parser<'a>) (yP: Parser<'b>) : Parser<'c> =
+    returnP f <*> xP <*> yP
 
 let pchar charToMatch =
     let innerFn input =
@@ -103,3 +125,11 @@ let parse3Digits =
     |>> int
 
 run parse3Digits "453ijk"
+
+let addP = lift2 (+)
+
+let p1 = parse3Digits
+let p2 = parse3Digits
+let exp = addP (p1 .>> pchar ' ') p2
+
+run exp "100 200"
