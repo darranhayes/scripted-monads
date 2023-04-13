@@ -21,6 +21,10 @@ let pchar charToMatch =
                 Failure msg
     Parser innerFn
 
+let run parser input =
+    let (Parser innerFn) = parser
+    innerFn input
+
 let parseA = pchar 'A'
 
-let (Parser(pA)) = parseA in pA "ABC"
+run parseA "ABC"
