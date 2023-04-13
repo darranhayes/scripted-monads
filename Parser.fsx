@@ -4,7 +4,7 @@ type ParseResult<'a> =
     | Success of 'a
     | Failure of string
 
-type Parser<'a> = 'a -> (string -> ParseResult<'a>)
+type Parser<'a> = Parser of (string -> ParseResult<'a>)
 
 let pchar charToMatch =
     let innerFn str =
@@ -19,8 +19,8 @@ let pchar charToMatch =
             else
                 let msg = $"Expecting: {charToMatch}, but got: {first}"
                 Failure msg
-    innerFn
+    Parser innerFn
 
-pchar 'A' ""
-pchar 'A' "ZBC"
-pchar 'A' "ABC"
+let parseA = pchar 'A'
+
+let (Parser(pA)) = parseA in pA "ABC"
