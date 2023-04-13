@@ -37,14 +37,29 @@ let andThen (parser1: Parser<'a>) (parser2: Parser<'b>) : Parser<'a * 'b> =
             | Success (value2, remaining2) ->
                 let newValue = value1, value2
                 Success (newValue, remaining2)
+
+    Parser innerFn
+
+let orElse (parser1: Parser<'a>) (parser2: Parser<'a>) : Parser<'a> =
+    let innerFn input =
+        match run parser1 input with
+            | Success v ->
+                Success v
+            | Failure _ ->
+                run parser2 input
+
     Parser innerFn
 
 let (.>>.) = andThen
+let (<|>) = orElse
 
 let parseA: Parser<char> = pchar 'A'
 let parseB: Parser<char> = pchar 'B'
 
 let parseAThenB = parseA .>>. parseB
+let parseAorB = parseA <|> parseB
+
+run parseAorB "BC"
 
 run parseAThenB ""
 run parseAThenB "A"
