@@ -53,17 +53,26 @@ let orElse (parser1: Parser<'a>) (parser2: Parser<'a>) : Parser<'a> =
 let (.>>.) = andThen
 let (<|>) = orElse
 
-let parseA: Parser<char> = pchar 'A'
-let parseB: Parser<char> = pchar 'B'
+let choice listOfParsers =
+    List.reduce (<|>) listOfParsers
 
-let parseAThenB = parseA .>>. parseB
-let parseAorB = parseA <|> parseB
+let anyOf listOfChars =
+    listOfChars
+    |> List.map pchar
+    |> choice
 
-run parseAorB "BC"
+let parseLowercase =
+    anyOf ['a'..'z']
 
-run parseAThenB ""
-run parseAThenB "A"
-run parseAThenB "AB"
-run parseAThenB "AC"
-run parseAThenB "ABC"
-run parseAThenB "ZBC"
+let parseUppercase =
+    anyOf ['A'..'Z']
+
+let parseDigit =
+    anyOf ['0'..'9']
+
+run parseLowercase "aBC"  // Success ('a', "BC")
+run parseLowercase "ABC"  // Failure "Expecting 'z'. Got 'A'"
+
+run parseDigit "1ABC"  // Success ("1", "ABC")
+run parseDigit "9ABC"  // Success ("9", "ABC")
+run parseDigit "|ABC"  // Failure "Expecting '9'. Got '|'"
