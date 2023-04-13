@@ -6,22 +6,7 @@ type ParseResult<'a> =
 
 type Parser<'a> = Parser of (string -> ParseResult<'a * string>)
 
-let pchar charToMatch =
-    let innerFn input =
-        if input = "" then
-            Failure "No more input"
-        else
-            let first = input[0]
-            if first = charToMatch then
-                let remainding = input[1..]
-                let msg = $"Found {first}"
-                Success (charToMatch, remainding)
-            else
-                let msg = $"Expecting: {charToMatch}, but got: {first}"
-                Failure msg
-    Parser innerFn
-
-let run parser input =
+let run (parser: Parser<'a>) (input: string) : ParseResult<'a * string> =
     let (Parser innerFn) = parser
     innerFn input
 
@@ -50,11 +35,53 @@ let orElse (parser1: Parser<'a>) (parser2: Parser<'a>) : Parser<'a> =
 
     Parser innerFn
 
+let mapP (f: 'a -> 'b) (parser: Parser<'a>) : Parser<'b> =
+    let innerFn input =
+        match run parser input with
+        | Success (value1, remaining1) ->
+            let value2 = f value1
+            Success (value2, remaining1)
+        | Failure err ->
+            Failure err
+
+    Parser innerFn
+
+/// Lift value x into a parser
+let returnP (x: 'a) : Parser<'a> =
+    let innerFn input =
+        Success (x, input)
+    Parser innerFn
+
+/// Compose two parsers so that the execute one after the other
 let (.>>.) = andThen
+
+/// Execute one parser and if it fails execute the other instead
 let (<|>) = orElse
 
-let choice listOfParsers =
+/// Apply function f to the results of the executed parser
+let (<!>) = mapP
+
+/// Pipe parser to mapP
+let (|>>) (x: Parser<'a>) (f:'a -> 'b) : Parser<'b> =
+    mapP f x
+
+let choice (listOfParsers: Parser<'a> list) : Parser<'a> =
     List.reduce (<|>) listOfParsers
+
+let pchar charToMatch =
+    let innerFn input =
+        if input = "" then
+            Failure "No more input"
+        else
+            let first = input[0]
+            if first = charToMatch then
+                let remainding = input[1..]
+                let msg = $"Found {first}"
+                Success (charToMatch, remainding)
+            else
+                let msg = $"Expecting: {charToMatch}, but got: {first}"
+                Failure msg
+    Parser innerFn
 
 let anyOf listOfChars =
     listOfChars
@@ -70,9 +97,9 @@ let parseUppercase =
 let parseDigit =
     anyOf ['0'..'9']
 
-run parseLowercase "aBC"  // Success ('a', "BC")
-run parseLowercase "ABC"  // Failure "Expecting 'z'. Got 'A'"
+let parse3Digits =
+    parseDigit .>>. parseDigit .>>. parseDigit
+    |>> fun ((c1, c2), c3) -> System.String [| c1; c2; c3 |]
+    |>> int
 
-run parseDigit "1ABC"  // Success ("1", "ABC")
-run parseDigit "9ABC"  // Success ("9", "ABC")
-run parseDigit "|ABC"  // Failure "Expecting '9'. Got '|'"
+run parse3Digits "453ijk"
