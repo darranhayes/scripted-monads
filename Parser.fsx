@@ -103,6 +103,32 @@ let rec sequence (list: Parser<'a> list) : Parser<'a list> =
     | x::xs ->
         consP x (sequence xs)
 
+let rec parseZeroOrMore (parser: Parser<'a>) (input: string) : list<'a> * string =
+    match run parser input with
+    | Failure _
+        -> ([], input)
+    | Success (value1, remaining1) ->
+        let (value2, remaining2 ) =
+            parseZeroOrMore parser remaining1
+        (value1::value2, remaining2)
+
+let many (parser: Parser<'a>) : Parser<'a list> =
+    let innerFn input =
+        Success (parseZeroOrMore parser input)
+
+    Parser innerFn
+
+let many1 (parser: Parser<'a>) : Parser<'a list> =
+    let innerFn input =
+        match run parser input with
+            | Failure err ->
+                Failure err
+            | Success (value1, remainder1) ->
+                let (value2, remainder2) =
+                    parseZeroOrMore  parser remainder1
+                Success (value1::value2, remainder2)
+    Parser innerFn
+
 let pchar charToMatch =
     let innerFn input =
         if input = "" then
@@ -144,24 +170,27 @@ let parseUppercase =
 let parseDigit =
     anyOf ['0'..'9']
 
-let parse3Digits =
-    parseDigit .>>. parseDigit .>>. parseDigit
-    |>> fun ((c1, c2), c3) -> System.String [| c1; c2; c3 |]
+let whitespaceChar =
+    anyOf [ ' '; '\t'; '\n' ]
+
+let whitespace =
+    many whitespaceChar
+
+(* *)
+
+let parseDigits =
+    many1 parseDigit
+    |>> charListToString
     |>> int
 
-run parse3Digits "453ijk"
+let parseOp =
+    anyOf [ '*'; '/'; '+'; '-' ]
 
-let addP = lift2 (+)
+let parseTerm =
+    whitespace >>. parseDigits .>> whitespace
 
-let exp = addP (parse3Digits .>> pchar ' ') parse3Digits
+let expression =
+    parseTerm .>>. parseOp .>>. parseTerm
 
-run exp "100 200"
-
-let parsers = [ pchar 'A'; pchar 'B'; pchar 'C' ]
-let combined = sequence parsers
-
-run combined "ABCD"
-
-let parsePublicModifier = pstring "public"
-
-run parsePublicModifier "public "
+run expression "  123  +  456  "
+run expression "123 / 1"
