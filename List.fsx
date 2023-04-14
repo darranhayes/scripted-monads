@@ -1,5 +1,5 @@
 #load "Continuation.fsx"
-open Continuations
+open Continuation
 
 type FList<'a> =
     | Empty

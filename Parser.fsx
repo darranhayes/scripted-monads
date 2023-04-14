@@ -79,7 +79,7 @@ let (.>>) (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'a> =
     |>> (fun (x, y) -> x)
 
 /// retain the result of right parser
-let (>>.) (p1: Parser<'a>) (p2: Parser<'a>) : Parser<'b> =
+let (>>.) (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'b> =
     p1 .>>. p2
     |>> (fun (x, y) -> y)
 
@@ -128,8 +128,6 @@ run parse3Digits "453ijk"
 
 let addP = lift2 (+)
 
-let p1 = parse3Digits
-let p2 = parse3Digits
-let exp = addP (p1 .>> pchar ' ') p2
+let exp = addP (parse3Digits .>> pchar ' ') parse3Digits
 
 run exp "100 200"

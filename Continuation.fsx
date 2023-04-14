@@ -1,5 +1,3 @@
-module Continuations
-
 type Cont<'a, 'b> =
     Cont of (('a -> 'b) -> 'b)
 

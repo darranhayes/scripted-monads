@@ -23,7 +23,7 @@ module State =
     let bind (f : 'a -> 's -> State<'s, 'b>) (m : 's -> State<'s, 'a>) : 's -> State<'s, 'b> =
         fun state ->
             let result, newState = m state
-            (f result) newState
+            f result newState
 
     let map (f : 'a -> 'b) (m : 's -> State<'s, 'a>) : 's -> State<'s, 'b> =
         bind (f >> ret) m

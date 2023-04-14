@@ -18,7 +18,8 @@ module State =
 
     /// applies the initial state to the computation m
     let inline run state (m : State<'s, 'a>)  =
-        let (State (f)) = m in (f state) // de-structures the computation f from the state monad container m and returns the application of state to f
+        let (State f) = m
+        f state
 
     let bind f m =
         State(
