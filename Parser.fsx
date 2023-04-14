@@ -144,6 +144,17 @@ let pchar charToMatch =
                 Failure msg
     Parser innerFn
 
+let anyOf listOfChars =
+    listOfChars
+    |> List.map pchar
+    |> choice
+
+let whitespaceChar =
+    anyOf [ ' '; '\t'; '\n' ]
+
+let whitespace =
+    many whitespaceChar
+
 let charListToString chars =
     chars
     |> List.toArray
@@ -156,41 +167,28 @@ let pstring (input: string) : Parser<string> =
     |> sequence
     |>> charListToString
 
-let anyOf listOfChars =
-    listOfChars
-    |> List.map pchar
-    |> choice
+let charListToInt list =
+    list
+    |> List.toArray
+    |> System.String
+    |> int
 
-let parseLowercase =
-    anyOf ['a'..'z']
-
-let parseUppercase =
-    anyOf ['A'..'Z']
-
-let parseDigit =
-    anyOf ['0'..'9']
-
-let whitespaceChar =
-    anyOf [ ' '; '\t'; '\n' ]
-
-let whitespace =
-    many whitespaceChar
+let pint =
+    many1 (anyOf ['0'..'9'])
+    |>> charListToInt
 
 (* *)
-
-let parseDigits =
-    many1 parseDigit
-    |>> charListToString
-    |>> int
 
 let parseOp =
     anyOf [ '*'; '/'; '+'; '-' ]
 
 let parseTerm =
-    whitespace >>. parseDigits .>> whitespace
+    whitespace >>. pint .>> whitespace
 
 let expression =
     parseTerm .>>. parseOp .>>. parseTerm
 
 run expression "  123  +  456  "
 run expression "123 / 1"
+
+run pint "47837fjdkjf"
