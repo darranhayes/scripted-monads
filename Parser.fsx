@@ -1,4 +1,5 @@
 // https://fsharpforfunandprofit.com/posts/understanding-parser-combinators/
+// https://fsharpforfunandprofit.com/posts/understanding-parser-combinators-2/
 
 type ParseResult<'a> =
     | Success of 'a
@@ -90,6 +91,18 @@ let choice (listOfParsers: Parser<'a> list) : Parser<'a> =
 let lift2 (f: 'a -> 'b -> 'c) (xP: Parser<'a>) (yP: Parser<'b>) : Parser<'c> =
     returnP f <*> xP <*> yP
 
+/// turn a list of parsers into a parser that contains a list of parsed values
+let rec sequence (list: Parser<'a> list) : Parser<'a list> =
+    let cons head tail = head::tail
+
+    let consP = lift2 cons
+
+    match list with
+    | []
+        -> returnP []
+    | x::xs ->
+        consP x (sequence xs)
+
 let pchar charToMatch =
     let innerFn input =
         if input = "" then
@@ -104,6 +117,18 @@ let pchar charToMatch =
                 let msg = $"Expecting: {charToMatch}, but got: {first}"
                 Failure msg
     Parser innerFn
+
+let charListToString chars =
+    chars
+    |> List.toArray
+    |> System.String
+
+let pstring (input: string) : Parser<string> =
+    input
+    |> Seq.toList
+    |> List.map pchar
+    |> sequence
+    |>> charListToString
 
 let anyOf listOfChars =
     listOfChars
@@ -131,3 +156,12 @@ let addP = lift2 (+)
 let exp = addP (parse3Digits .>> pchar ' ') parse3Digits
 
 run exp "100 200"
+
+let parsers = [ pchar 'A'; pchar 'B'; pchar 'C' ]
+let combined = sequence parsers
+
+run combined "ABCD"
+
+let parsePublicModifier = pstring "public"
+
+run parsePublicModifier "public "
