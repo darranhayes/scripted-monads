@@ -154,6 +154,9 @@ let opt (parser : Parser<'a>) : Parser<'a option> =
     let none = returnP None
     some <|> none
 
+let between (p1: Parser<'a>) (p2: Parser<'b>) (p3: Parser<'c>) : Parser<'b> =
+    p1 >>. p2 .>> p3
+
 let whitespaceChar =
     anyOf [ ' '; '\t'; '\n' ]
 
@@ -178,7 +181,7 @@ let charListToInt list =
     |> System.String
     |> int
 
-let pint =
+let pint: Parser<int> =
     let resultToInt (sign, chars) =
         let i =
             chars
@@ -199,13 +202,25 @@ let pint =
 (* *)
 
 let parseOp =
-    anyOf [ '*'; '/'; '+'; '-' ]
+    whitespace >>. anyOf [ '*'; '/'; '+'; '-' ] .>> whitespace
+
+let parseLParen =
+    whitespace .>>. pchar '(' .>>. whitespace
+
+let parseRParen =
+    whitespace .>>. pchar ')' .>>. whitespace
 
 let parseTerm =
     whitespace >>. pint .>> whitespace
 
 let expression =
-    parseTerm .>>. parseOp .>>. parseTerm
+    let expr =
+        parseTerm .>>. parseOp .>>. parseTerm
 
-run expression "  +123  +  -456  "
-run expression "-123 / +1"
+    let withParens =
+        between parseLParen expr parseRParen
+
+    expr <|> withParens
+
+run expression " ( +123  +  -456 ) "
+run expression " -123 / +1 "
