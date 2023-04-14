@@ -149,6 +149,11 @@ let anyOf listOfChars =
     |> List.map pchar
     |> choice
 
+let opt (parser : Parser<'a>) : Parser<'a option> =
+    let some = parser |>> Some
+    let none = returnP None
+    some <|> none
+
 let whitespaceChar =
     anyOf [ ' '; '\t'; '\n' ]
 
@@ -174,8 +179,22 @@ let charListToInt list =
     |> int
 
 let pint =
-    many1 (anyOf ['0'..'9'])
-    |>> charListToInt
+    let resultToInt (sign, chars) =
+        let i =
+            chars
+            |> charListToInt
+
+        match sign with
+        | Some '-' -> -i
+        | _ -> i
+
+    let sign =
+        opt (anyOf [ '-'; '+' ])
+    let digits =
+        many1 (anyOf [ '0'..'9' ])
+
+    sign .>>. digits
+    |>> resultToInt
 
 (* *)
 
@@ -188,7 +207,5 @@ let parseTerm =
 let expression =
     parseTerm .>>. parseOp .>>. parseTerm
 
-run expression "  123  +  456  "
-run expression "123 / 1"
-
-run pint "47837fjdkjf"
+run expression "  +123  +  -456  "
+run expression "-123 / +1"
