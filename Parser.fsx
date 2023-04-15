@@ -78,7 +78,7 @@ module Parser =
 
     /// andThen compose two parsers
     let andThen (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'a * 'b> =
-        let label = sprintf "%s andThen %s" (getLabel p1) (getLabel p2)
+        let label = sprintf "'%s' andThen '%s'" (getLabel p1) (getLabel p2)
         p1 >>= (fun p1Result ->
         p2 >>= (fun p2Result ->
             returnP (p1Result, p2Result)))
@@ -99,7 +99,7 @@ module Parser =
         applyP
 
     let orElse (p1: Parser<'a>) (p2: Parser<'a>) : Parser<'a> =
-        let label = sprintf "%s orElse %s" (getLabel p1) (getLabel p1)
+        let label = sprintf "either '%s' orElse '%s'" (getLabel p1) (getLabel p2)
 
         let innerFn input =
             match run p1 input with
@@ -171,24 +171,28 @@ module Parser =
         many p >>= (fun tail ->
             returnP (head::tail)))
 
-    let pchar charToMatch =
-        let label = sprintf "'%c'" charToMatch
-
+    let satisfy predicate (label: string) =
         let innerFn input =
-            if input = "" then
+            if System.String.IsNullOrEmpty input then
                 Failure (label, "No more input")
             else
                 let first = input[0]
-                if first = charToMatch then
-                    let remainding = input[1..]
-                    Success (charToMatch, remainding)
+                if predicate first then
+                    let remaining = input[1..]
+                    Success (first, remaining)
                 else
-                    let msg = $"Expecting: '{charToMatch}', but got: '{first}'"
-                    Failure (label, msg)
+                    let error = sprintf "Unexpected: '%c'" first
+                    Failure (label, error)
+
         { ParserFn = innerFn; Label = label }
 
+    let pchar charToMatch =
+        let predicate ch = (ch = charToMatch)
+        let label = sprintf "'%c'" charToMatch
+        satisfy predicate label
+
     let anyOf listOfChars =
-        let label = sprintf "any of %A" listOfChars
+        let label = sprintf "anyOf %A" listOfChars
         listOfChars
         |> List.map pchar
         |> choice
@@ -203,6 +207,7 @@ module Parser =
     /// between keeps only the result of the middle parser.
     let between (p1: Parser<'a>) (p2: Parser<'b>) (p3: Parser<'c>) : Parser<'b> =
         p1 >>. p2 .>> p3
+        <?> sprintf "%s %s %s" (p1.Label) (p2.Label) (p3.Label)
 
     /// sepBy1 parses one or more occurrences of a parser with a separator.
     let sepBy1 (p: Parser<'a>) (separator: Parser<'b>) : Parser<'a list> =
@@ -214,12 +219,26 @@ module Parser =
         sepBy1 p separator <|> returnP []
 
     let whitespaceChar =
-        anyOf [ ' '; '\t'; '\n' ]
+        let predicate = System.Char.IsWhiteSpace
+        let label = "whitespace"
+        satisfy predicate label
 
     let whitespace =
         many whitespaceChar
 
-    let pstring (input: string) : Parser<string> =
+    let spaces =
+        many whitespaceChar
+
+    let spaces1 =
+        many1 whitespaceChar
+
+    let punctuationChar =
+        let predicate = System.Char.IsPunctuation
+        let label = "punctuation"
+
+        satisfy predicate label
+
+    let pString (input: string) : Parser<string> =
         input
         |> Seq.toList
         |> List.map pchar
@@ -232,13 +251,15 @@ module Parser =
         |> System.String
         |> int
 
-    let parseDigit =
-        anyOf [ '0'..'9' ]
+    let pDigit =
+        let predicate = System.Char.IsDigit
+        let label = "digit"
+        satisfy predicate label
 
-    let parseSign =
+    let pSign =
         anyOf [ '-'; '+' ]
 
-    let pint: Parser<int> =
+    let pInt: Parser<int> =
         let resultToInt (sign, chars) =
             let i =
                 chars
@@ -249,9 +270,9 @@ module Parser =
             | _ -> i
 
         let sign =
-            opt parseSign
+            opt pSign
         let digits =
-            many1 parseDigit
+            many1 pDigit
 
         sign .>>. digits
         |>> resultToInt
@@ -264,20 +285,23 @@ let parseOp =
 
 let parseLParen =
     whitespace .>>. pchar '(' .>>. whitespace
+    <?> "("
 
 let parseRParen =
     whitespace .>>. pchar ')' .>>. whitespace
+    <?> ")"
 
 let parseTerm =
-    whitespace >>. pint .>> whitespace
+    whitespace >>. pInt .>> whitespace
+    <?> "int"
+
+let expr =
+    parseTerm .>>. parseOp .>>. parseTerm
+    <?> "term op term"
 
 let expression =
-    let expr =
-        parseTerm .>>. parseOp .>>. parseTerm
-
     let withParens =
         between parseLParen expr parseRParen
-
     expr <|> withParens
 
 run expression " ( +123  +  -456 ) "
@@ -286,16 +310,21 @@ run expression " -123 / +1 "
 let comma = pchar ','
 let digit = anyOf ['0'..'9'] <?> "digit"
 
-run digit "fds" |> printResult
+run digit "fds"
 
-let zeroOrMoreDigitList = sepBy digit comma
+let zeroOrMoreDigitList =
+    sepBy digit comma
+    <?> "list of digits separated by ','"
+
 let oneOrMoreDigitList =
     sepBy1 digit comma
+    <?> "list of digits separated by ','"
 
 run oneOrMoreDigitList "1;"      // Success (['1'], ";")
 run oneOrMoreDigitList "1,2;"    // Success (['1'; '2'], ";")
 run oneOrMoreDigitList "1,2,3;"  // Success (['1'; '2'; '3'], ";")
 run oneOrMoreDigitList "Z;"      // Failure "Expecting '9'. Got 'Z'"
+|> printResult
 
 run zeroOrMoreDigitList "1;"     // Success (['1'], ";")
 run zeroOrMoreDigitList "1,2;"   // Success (['1'; '2'], ";")
