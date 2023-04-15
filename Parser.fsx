@@ -157,6 +157,13 @@ let opt (parser : Parser<'a>) : Parser<'a option> =
 let between (p1: Parser<'a>) (p2: Parser<'b>) (p3: Parser<'c>) : Parser<'b> =
     p1 >>. p2 .>> p3
 
+let sepBy1 (p: Parser<'a>) (separator: Parser<'b>) : Parser<'a list> =
+    p .>>. many (separator >>. p)
+    |>> List.Cons
+
+let sepBy (p: Parser<'a>) (separator: Parser<'b>) : Parser<'a list> =
+    sepBy1 p separator <|> returnP []
+
 let whitespaceChar =
     anyOf [ ' '; '\t'; '\n' ]
 
@@ -224,3 +231,19 @@ let expression =
 
 run expression " ( +123  +  -456 ) "
 run expression " -123 / +1 "
+
+let comma = pchar ','
+let digit = anyOf ['0'..'9']
+
+let zeroOrMoreDigitList = sepBy digit comma
+let oneOrMoreDigitList = sepBy1 digit comma
+
+run oneOrMoreDigitList "1;"      // Success (['1'], ";")
+run oneOrMoreDigitList "1,2;"    // Success (['1'; '2'], ";")
+run oneOrMoreDigitList "1,2,3;"  // Success (['1'; '2'; '3'], ";")
+run oneOrMoreDigitList "Z;"      // Failure "Expecting '9'. Got 'Z'"
+
+run zeroOrMoreDigitList "1;"     // Success (['1'], ";")
+run zeroOrMoreDigitList "1,2;"   // Success (['1'; '2'], ";")
+run zeroOrMoreDigitList "1,2,3;" // Success (['1'; '2'; '3'], ";")
+run zeroOrMoreDigitList "Z;"     // Success ([], "Z;")
