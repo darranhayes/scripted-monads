@@ -6,32 +6,39 @@ module Parser
 // https://fsharpforfunandprofit.com/posts/understanding-parser-combinators/
 // https://fsharpforfunandprofit.com/posts/understanding-parser-combinators-2/
 
+type ParserLabel = string
+type ParserError = string
+
 type ParseResult<'a> =
     | Success of 'a
-    | Failure of string
+    | Failure of ParserLabel * ParserError
 
-type Parser<'a> = Parser of (string -> ParseResult<'a * string>)
+type Parser<'a> = {
+    ParserFn : string -> ParseResult<'a * string>
+    Label : ParserLabel
+}
+
+let run (parser: Parser<'a>) (input: string) : ParseResult<'a * string> =
+    parser.ParserFn input
 
 /// returnP lifts a normal value into the world of parsers.
 let returnP (x: 'a) : Parser<'a> =
+    let label = sprintf "%A" x
     let innerFn input =
         Success (x, input)
-    Parser innerFn
-
-let run (parser: Parser<'a>) (input: string) : ParseResult<'a * string> =
-    let (Parser innerFn) = parser
-    innerFn input
+    { ParserFn = innerFn; Label = label }
 
 /// bindP chains the result of a parser to another parser-producing function.
 let bindP (f: 'a -> Parser<'b>) (p: Parser<'a>) : Parser<'b> =
+    let label = "unknown"
     let innerFn input =
         match run p input with
-        | Failure err ->
-            Failure err
+        | Failure (label, error) ->
+            Failure (label, error)
         | Success (value1, remainder1) ->
             let newParser = f value1
             run newParser remainder1
-    Parser innerFn
+    { ParserFn = innerFn; Label = label }
 
 /// bindP
 let (>>=) (p: Parser<'a>) (f: 'a -> Parser<'b>) : Parser<'b> =
@@ -66,6 +73,7 @@ let (<*>) =
     applyP
 
 let orElse (p1: Parser<'a>) (p2: Parser<'a>) : Parser<'a> =
+    let label = sprintf "%s orElse %s" (p1.Label) (p2.Label)
     let innerFn input =
         match run p1 input with
             | Success v ->
@@ -73,7 +81,7 @@ let orElse (p1: Parser<'a>) (p2: Parser<'a>) : Parser<'a> =
             | Failure _ ->
                 run p2 input
 
-    Parser innerFn
+    { ParserFn = innerFn; Label = label }
 
 /// orElse
 let (<|>) =
@@ -123,10 +131,11 @@ let rec parseZeroOrMore (p: Parser<'a>) (input: string) : list<'a> * string =
 
 /// many matches zero or more occurrences of the specified parser.
 let many (p: Parser<'a>) : Parser<'a list> =
+    let label = sprintf "many %s" (p.Label)
     let innerFn input =
         Success (parseZeroOrMore p input)
 
-    Parser innerFn
+    { ParserFn = innerFn; Label = label }
 
 /// many1 matches one or more occurrences of the specified parser.
 let many1 (p: Parser<'a>) : Parser<'a list> =
@@ -135,9 +144,10 @@ let many1 (p: Parser<'a>) : Parser<'a list> =
         returnP (head::tail)))
 
 let pchar charToMatch =
+    let label = sprintf "pchar '%c'" charToMatch
     let innerFn input =
         if input = "" then
-            Failure "No more input"
+            Failure (label, "No more input")
         else
             let first = input[0]
             if first = charToMatch then
@@ -145,9 +155,9 @@ let pchar charToMatch =
                 let msg = $"Found {first}"
                 Success (charToMatch, remainding)
             else
-                let msg = $"Expecting: {charToMatch}, but got: {first}"
-                Failure msg
-    Parser innerFn
+                let msg = $"Expecting: '{charToMatch}', but got: '{first}'"
+                Failure (label, msg)
+    { ParserFn = innerFn; Label = label }
 
 let anyOf listOfChars =
     listOfChars
