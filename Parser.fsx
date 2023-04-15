@@ -1,3 +1,8 @@
+/// <summary>
+/// A monadic parser library
+/// </summary>
+module Parser
+
 // https://fsharpforfunandprofit.com/posts/understanding-parser-combinators/
 // https://fsharpforfunandprofit.com/posts/understanding-parser-combinators-2/
 
@@ -7,127 +12,127 @@ type ParseResult<'a> =
 
 type Parser<'a> = Parser of (string -> ParseResult<'a * string>)
 
-let run (parser: Parser<'a>) (input: string) : ParseResult<'a * string> =
-    let (Parser innerFn) = parser
-    innerFn input
-
-let andThen (parser1: Parser<'a>) (parser2: Parser<'b>) : Parser<'a * 'b> =
-    let innerFn input =
-        match run parser1 input with
-        | Failure err ->
-            Failure err
-        | Success (value1, remaining1) ->
-            match run parser2 remaining1 with
-            | Failure err ->
-                Failure err
-            | Success (value2, remaining2) ->
-                let newValue = value1, value2
-                Success (newValue, remaining2)
-
-    Parser innerFn
-
-let orElse (parser1: Parser<'a>) (parser2: Parser<'a>) : Parser<'a> =
-    let innerFn input =
-        match run parser1 input with
-            | Success v ->
-                Success v
-            | Failure _ ->
-                run parser2 input
-
-    Parser innerFn
-
-let mapP (f: 'a -> 'b) (parser: Parser<'a>) : Parser<'b> =
-    let innerFn input =
-        match run parser input with
-        | Success (value1, remaining1) ->
-            let value2 = f value1
-            Success (value2, remaining1)
-        | Failure err ->
-            Failure err
-
-    Parser innerFn
-
-/// Lift value x into a parser
+/// returnP lifts a normal value into the world of parsers.
 let returnP (x: 'a) : Parser<'a> =
     let innerFn input =
         Success (x, input)
     Parser innerFn
 
-/// unwrap function in fp and apply it to the value in xP
-let applyP (fP: Parser<'a -> 'b>) (xP: Parser<'a>) : Parser<'b> =
-    andThen fP xP
-    |> mapP (fun (f, x) -> f x)
+let run (parser: Parser<'a>) (input: string) : ParseResult<'a * string> =
+    let (Parser innerFn) = parser
+    innerFn input
 
-/// andThen
-let (.>>.) = andThen
+/// bindP chains the result of a parser to another parser-producing function.
+let bindP (f: 'a -> Parser<'b>) (p: Parser<'a>) : Parser<'b> =
+    let innerFn input =
+        match run p input with
+        | Failure err ->
+            Failure err
+        | Success (value1, remainder1) ->
+            let newParser = f value1
+            run newParser remainder1
+    Parser innerFn
 
-/// orElse
-let (<|>) = orElse
+/// bindP
+let (>>=) (p: Parser<'a>) (f: 'a -> Parser<'b>) : Parser<'b> =
+    bindP f p
+
+/// mapP transforms the result of a parser.
+let mapP (f: 'a -> 'b) : Parser<'a> -> Parser<'b> =
+    bindP (f >> returnP)
 
 /// mapP
-let (<!>) = mapP
+let (<!>) =
+    mapP
+
+/// andThen compose two parsers
+let andThen (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'a * 'b> =
+    p1 >>= (fun p1Result ->
+    p2 >>= (fun p2Result ->
+        returnP (p1Result, p2Result)))
+
+/// andThen
+let (.>>.) =
+    andThen
+
+/// applyP lifts multi-parameter functions into functions that work on parsers.
+let applyP (fP: Parser<'a -> 'b>) (xP: Parser<'a>) : Parser<'b> =
+    fP >>= (fun f ->
+    xP >>= (fun x ->
+        returnP (f x)))
 
 /// applyP
-let (<*>) = applyP
+let (<*>) =
+    applyP
+
+let orElse (p1: Parser<'a>) (p2: Parser<'a>) : Parser<'a> =
+    let innerFn input =
+        match run p1 input with
+            | Success v ->
+                Success v
+            | Failure _ ->
+                run p2 input
+
+    Parser innerFn
+
+/// orElse
+let (<|>) =
+    orElse
 
 /// Pipe parser to mapP
-let (|>>) (x: Parser<'a>) (f:'a -> 'b) : Parser<'b> =
-    mapP f x
+let (|>>) (p: Parser<'a>) (f:'a -> 'b) : Parser<'b> =
+    mapP f p
 
-/// retain result of left parser
+/// .>> keeps only the result of the left side parser.
 let (.>>) (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'a> =
     p1 .>>. p2
     |>> (fun (x, y) -> x)
 
-/// retain the result of right parser
+/// >>. keeps only the result of the right side parser.
 let (>>.) (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'b> =
     p1 .>>. p2
     |>> (fun (x, y) -> y)
 
-let choice (listOfParsers: Parser<'a> list) : Parser<'a> =
-    List.reduce (<|>) listOfParsers
+let choice (list: Parser<'a> list) : Parser<'a> =
+    List.reduce (<|>) list
 
 /// lift binary functions and apply to parsers
 let lift2 (f: 'a -> 'b -> 'c) (xP: Parser<'a>) (yP: Parser<'b>) : Parser<'c> =
     returnP f <*> xP <*> yP
 
-/// turn a list of parsers into a parser that contains a list of parsed values
+/// sequence converts a list of parsers into a parser containing a list.
 let rec sequence (list: Parser<'a> list) : Parser<'a list> =
     let cons head tail = head::tail
 
     let consP = lift2 cons
 
     match list with
-    | []
-        -> returnP []
+    | [] ->
+        returnP []
     | x::xs ->
         consP x (sequence xs)
 
-let rec parseZeroOrMore (parser: Parser<'a>) (input: string) : list<'a> * string =
-    match run parser input with
-    | Failure _
-        -> ([], input)
+let rec parseZeroOrMore (p: Parser<'a>) (input: string) : list<'a> * string =
+    match run p input with
+    | Failure _ ->
+        ([], input)
     | Success (value1, remaining1) ->
         let (value2, remaining2 ) =
-            parseZeroOrMore parser remaining1
+            parseZeroOrMore p remaining1
         (value1::value2, remaining2)
 
-let many (parser: Parser<'a>) : Parser<'a list> =
+/// many matches zero or more occurrences of the specified parser.
+let many (p: Parser<'a>) : Parser<'a list> =
     let innerFn input =
-        Success (parseZeroOrMore parser input)
+        Success (parseZeroOrMore p input)
 
     Parser innerFn
 
-let many1 (parser: Parser<'a>) : Parser<'a list> =
-    let innerFn input =
-        match run parser input with
-            | Failure err ->
-                Failure err
-            | Success (value1, remainder1) ->
-                let (value2, remainder2) =
-                    parseZeroOrMore  parser remainder1
-                Success (value1::value2, remainder2)
-    Parser innerFn
+/// many1 matches one or more occurrences of the specified parser.
+let many1 (p: Parser<'a>) : Parser<'a list> =
+    p >>= (fun head ->
+    many p >>= (fun tail ->
+        returnP (head::tail)))
 
 let pchar charToMatch =
     let innerFn input =
@@ -149,18 +154,22 @@ let anyOf listOfChars =
     |> List.map pchar
     |> choice
 
-let opt (parser : Parser<'a>) : Parser<'a option> =
-    let some = parser |>> Some
+/// opt matches an optional occurrence of the specified parser.
+let opt (p : Parser<'a>) : Parser<'a option> =
+    let some = p |>> Some
     let none = returnP None
     some <|> none
 
+/// between keeps only the result of the middle parser.
 let between (p1: Parser<'a>) (p2: Parser<'b>) (p3: Parser<'c>) : Parser<'b> =
     p1 >>. p2 .>> p3
 
+/// sepBy1 parses one or more occurrences of a parser with a separator.
 let sepBy1 (p: Parser<'a>) (separator: Parser<'b>) : Parser<'a list> =
     p .>>. many (separator >>. p)
     |>> List.Cons
 
+/// sepBy parses zero or more occurrences of a parser with a separator.
 let sepBy (p: Parser<'a>) (separator: Parser<'b>) : Parser<'a list> =
     sepBy1 p separator <|> returnP []
 
@@ -247,3 +256,4 @@ run zeroOrMoreDigitList "1;"     // Success (['1'], ";")
 run zeroOrMoreDigitList "1,2;"   // Success (['1'; '2'], ";")
 run zeroOrMoreDigitList "1,2,3;" // Success (['1'; '2'; '3'], ";")
 run zeroOrMoreDigitList "Z;"     // Success ([], "Z;")
+
