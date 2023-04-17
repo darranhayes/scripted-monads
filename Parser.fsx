@@ -467,3 +467,66 @@ open Parser
 let input = ""
 
 run pText (InputState.fromString input) |> printResult
+
+// simple calculator
+// 3 * 4 / 2
+
+type Op =
+    | Add
+    | Sub
+    | Mul
+    | Div
+
+type Expr<'a> =
+    | Value of 'a
+    | Expr of (Expr<'a> * Op * Expr<'a>)
+
+type Map<'a, 'b> = 'a -> 'b
+type Monoid<'a> = 'a -> 'a -> 'a
+
+let foldExpr
+    (value: Map<'a, 'b>)
+    (add: Monoid<'b>)
+    (sub: Monoid<'b>)
+    (mul: Monoid<'b>)
+    (div: Monoid<'b>)
+    (exprTree: Expr<'a>)
+    : 'b =
+        let rec fold expr =
+            match expr with
+            | Value v ->
+                value v
+            | Expr (e1, op, e2) ->
+                let apply o = o (fold e1) (fold e2)
+                match op with
+                | Add ->
+                    apply add
+                | Sub ->
+                    apply sub
+                | Mul ->
+                    apply mul
+                | Div ->
+                    apply div
+        fold exprTree
+
+let eval =
+    foldExpr
+        float
+        (+)
+        (-)
+        (*)
+        (/)
+
+let describe : Expr<int> -> string =
+    foldExpr
+        string
+        (sprintf "%s + %s")
+        (sprintf "%s - %s")
+        (sprintf "%s * %s")
+        (sprintf "%s / %s")
+
+let example =
+    Expr(Value 10, Add, Expr(Value 20, Mul, Value 3))
+
+describe example
+eval example
