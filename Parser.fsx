@@ -30,9 +30,6 @@ module InputState =
         member this.remaining : string =
             this.Chars.Substring this.Position.CharPosition
 
-    let fromString (input: string) : InputState =
-        { Chars = input; Position = initialPosition }
-
     let nextChar (input: InputState) : InputState * char option =
         let currentPosition = input.Position.CharPosition
         if currentPosition >= input.Chars.Length then
@@ -47,9 +44,16 @@ module InputState =
                     input.updatePosition (incrementColumn input.Position)
             newInput, Some nextChar
 
+module TextInput =
+    open InputState
+
+    let fromString (input: string) : InputState =
+        { Chars = input; Position = initialPosition }
+
 module Parser =
 
     open InputState
+    open TextInput
 
     // https://fsharpforfunandprofit.com/posts/understanding-parser-combinators/
     // https://fsharpforfunandprofit.com/posts/understanding-parser-combinators-2/
@@ -79,8 +83,13 @@ module Parser =
             : Parser<'a> =
                 { ParserFn = fn; Label = label }
 
-    let run (parser: Parser<'a>) (input: InputState) : ParseResult<'a * InputState> =
+    /// Run the parser on an InputState
+    let runOnInput (parser: Parser<'a>) (input: InputState) : ParseResult<'a * InputState> =
         parser.ParserFn input
+
+    /// Run the parser on a string
+    let run (parser: Parser<'a>) (inputStr: string) : ParseResult<'a * InputState> =
+        runOnInput parser (fromString inputStr)
 
     let parserPositionFromInputState (inputState: InputState) : ParserPosition =
         let charPosition = inputState.Position.CharPosition
@@ -104,7 +113,7 @@ module Parser =
         |> int
 
     let rec parseZeroOrMore (p: Parser<'a>) (input: InputState) : list<'a> * InputState =
-        match run p input with
+        match runOnInput p input with
         | Failure _ ->
             ([], input)
         | Success (value1, remaining1) ->
@@ -170,12 +179,12 @@ module Parser =
     let bindP (f: 'a -> Parser<'b>) (p: Parser<'a>) : Parser<'b> =
         let label = "unknown"
         let innerFn input =
-            match run p input with
+            match runOnInput p input with
             | Failure (label, error, position) ->
                 Failure (label, error, position)
             | Success (value1, remainder1) ->
                 let newParser = f value1
-                run newParser remainder1
+                runOnInput newParser remainder1
         Parser.create innerFn label
 
     /// bindP
@@ -249,11 +258,11 @@ module Parser =
         let label = sprintf "%s orElse %s" (getLabel p1) (getLabel p2)
 
         let innerFn input =
-            match run p1 input with
+            match runOnInput p1 input with
                 | Success v ->
                     Success v
                 | Failure _ ->
-                    run p2 input
+                    runOnInput p2 input
 
         Parser.create innerFn label
         <?> label
@@ -466,33 +475,52 @@ module Parser =
     let (>>%) (p: Parser<'a>) (x: 'b) : Parser<'b> =
         p |>> (fun _ -> x)
 
+    /// Wraps a mutable parser for recusive parsing requirements.
+    /// Fixup the parser reference later.
+    let inline createParserForwardedToRef<'a> () =
+        let dummyParser : Parser<'a> =
+            let innerFn _ =
+                failwith "unfixed forwarded parser"
+            { ParserFn = innerFn; Label = "unknown" }
+
+        let parserRef =
+            ref dummyParser
+
+        let innerFn input =
+            runOnInput (parserRef.Value) input
+
+        let wrapperParser =
+            { ParserFn = innerFn; Label = "unknown" }
+
+        wrapperParser, parserRef
+
 open Parser
 open InputState
 
 let evaluateExpression expressionEvaluator (result: ParseResult<'a * InputState>) =
     match result with
-    | Failure (f: ParserLabel, _, _) ->
-        printfn "%s" f
+    | Failure _ ->
+        printResult result
     | Success (value, _) ->
         printfn "%s" (expressionEvaluator value)
-
-type Expr<'a> =
-    | Constant of 'a
-    | Add of Expr<'a> * Expr<'a>
-    | Sub of Expr<'a> * Expr<'a>
-    | Mul of Expr<'a> * Expr<'a>
-    | Div of Expr<'a> * Expr<'a>
 
 type Map<'a, 'b> = 'a -> 'b
 type Monoid<'a> = 'a -> 'a -> 'a
 
+type Expr =
+    | Constant of double
+    | Add of Expr * Expr
+    | Sub of Expr * Expr
+    | Mul of Expr * Expr
+    | Div of Expr * Expr
+
 let foldExpr
-    (value: Map<'a, 'b>)
+    (value: Map<double, 'b>)
     (add: Monoid<'b>)
     (sub: Monoid<'b>)
     (mul: Monoid<'b>)
     (div: Monoid<'b>)
-    (exprTree: Expr<'a>)
+    (exprTree: Expr)
     : 'b =
         let rec fold expr =
             match expr with
@@ -516,7 +544,7 @@ let eval =
         (*)
         (/)
 
-let describe : Expr<float> -> string =
+let describe : Expr -> string =
     foldExpr
         string
         (sprintf "%s + %s")
@@ -525,7 +553,7 @@ let describe : Expr<float> -> string =
         (sprintf "%s / %s")
 
 let pConstant =
-    pFloat <|> (pInt |>> float) .>> whitespaces
+    pFloat <|> (pInt |>> double) .>> whitespaces
     |>> Constant <?> "constant"
 
 let bracketedExpression p =
@@ -543,28 +571,27 @@ let pDivOp =
 let pOp =
     (pAddOp <|> pSubOp <|> pMulOp <|> pDivOp) .>> whitespaces
 
-let pExpr =
+let (pExpr, exprRef) =
+    createParserForwardedToRef<Expr> ()
+
+let expressionParser =
+    bracketedExpression pExpr <|>
+    bracketedExpression pConstant
+
+let pExprImplementation =
     (pConstant .>>. pOp) .>>. pConstant
     |>> fun ((e1, opFn), e2) -> opFn (e1, e2)
 
-let expressionParser =
-    bracketedExpression pExpr <|> pExpr <|>
-    bracketedExpression pConstant <|> pConstant
+exprRef.Value <- pExprImplementation
 
 let parseAndDescribe str =
-    str |> fromString |> run expressionParser |> evaluateExpression (describe)
+    str |> run expressionParser |> evaluateExpression (describe >> sprintf "'%s'")
 
 let parseAndEvaluate str =
-    str |> fromString |> run expressionParser |> evaluateExpression (eval >> string)
+    str |> run expressionParser |> evaluateExpression (eval >> sprintf "= %f")
 
-"0.5" |> parseAndDescribe
-"5" |> parseAndDescribe
 "(0.5)" |> parseAndDescribe
-"10 * 20" |> parseAndDescribe
 "(10 / 20)" |> parseAndDescribe
 
-"0.5" |> parseAndEvaluate
-"5" |> parseAndEvaluate
 "(0.5)" |> parseAndEvaluate
-"10 * 20" |> parseAndEvaluate
 "(10 / 20)" |> parseAndEvaluate
