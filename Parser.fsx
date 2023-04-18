@@ -441,7 +441,7 @@ module Parser =
         |>> resultToInt
         <?> label
 
-    let pfloat =
+    let pFloat =
         let label = "signed float"
 
         let resultToFloat (sign, digits1, _, digits2) =
@@ -462,24 +462,26 @@ module Parser =
         |>> resultToFloat
         <?> label
 
+    /// Ignore parser result, return x
+    let (>>%) (p: Parser<'a>) (x: 'b) : Parser<'b> =
+        p |>> (fun _ -> x)
+
 open Parser
+open InputState
 
-let input = ""
-
-run pText (InputState.fromString input) |> printResult
-
-// simple calculator
-// 3 * 4 / 2
-
-type Op =
-    | Add
-    | Sub
-    | Mul
-    | Div
+let evaluateExpression expressionEvaluator (result: ParseResult<'a * InputState>) =
+    match result with
+    | Failure (f: ParserLabel, _, _) ->
+        printfn "%s" f
+    | Success (value, _) ->
+        printfn "%s" (expressionEvaluator value)
 
 type Expr<'a> =
-    | Value of 'a
-    | Expr of (Expr<'a> * Op * Expr<'a>)
+    | Constant of 'a
+    | Add of Expr<'a> * Expr<'a>
+    | Sub of Expr<'a> * Expr<'a>
+    | Mul of Expr<'a> * Expr<'a>
+    | Div of Expr<'a> * Expr<'a>
 
 type Map<'a, 'b> = 'a -> 'b
 type Monoid<'a> = 'a -> 'a -> 'a
@@ -494,19 +496,16 @@ let foldExpr
     : 'b =
         let rec fold expr =
             match expr with
-            | Value v ->
+            | Constant v ->
                 value v
-            | Expr (e1, op, e2) ->
-                let apply o = o (fold e1) (fold e2)
-                match op with
-                | Add ->
-                    apply add
-                | Sub ->
-                    apply sub
-                | Mul ->
-                    apply mul
-                | Div ->
-                    apply div
+            | Add (e1, e2) ->
+                add (fold e1) (fold e2)
+            | Sub (e1, e2)->
+                sub (fold e1) (fold e2)
+            | Mul (e1, e2)->
+                mul (fold e1) (fold e2)
+            | Div (e1, e2)->
+                div (fold e1) (fold e2)
         fold exprTree
 
 let eval =
@@ -517,7 +516,7 @@ let eval =
         (*)
         (/)
 
-let describe : Expr<int> -> string =
+let describe : Expr<float> -> string =
     foldExpr
         string
         (sprintf "%s + %s")
@@ -525,8 +524,47 @@ let describe : Expr<int> -> string =
         (sprintf "%s * %s")
         (sprintf "%s / %s")
 
-let example =
-    Expr(Value 10, Add, Expr(Value 20, Mul, Value 3))
+let pConstant =
+    pFloat <|> (pInt |>> float) .>> whitespaces
+    |>> Constant <?> "constant"
 
-describe example
-eval example
+let bracketedExpression p =
+    betweenExclusive (pChar '(') p (pChar ')')
+
+let pAddOp =
+    pChar '+' >>% Add
+let pSubOp =
+    pChar '-' >>% Sub
+let pMulOp =
+    pChar '*' >>% Mul
+let pDivOp =
+    pChar '/' >>% Div
+
+let pOp =
+    (pAddOp <|> pSubOp <|> pMulOp <|> pDivOp) .>> whitespaces
+
+let pExpr =
+    (pConstant .>>. pOp) .>>. pConstant
+    |>> fun ((e1, opFn), e2) -> opFn (e1, e2)
+
+let expressionParser =
+    bracketedExpression pExpr <|> pExpr <|>
+    bracketedExpression pConstant <|> pConstant
+
+let parseAndDescribe str =
+    str |> fromString |> run expressionParser |> evaluateExpression (describe)
+
+let parseAndEvaluate str =
+    str |> fromString |> run expressionParser |> evaluateExpression (eval >> string)
+
+"0.5" |> parseAndDescribe
+"5" |> parseAndDescribe
+"(0.5)" |> parseAndDescribe
+"10 * 20" |> parseAndDescribe
+"(10 / 20)" |> parseAndDescribe
+
+"0.5" |> parseAndEvaluate
+"5" |> parseAndEvaluate
+"(0.5)" |> parseAndEvaluate
+"10 * 20" |> parseAndEvaluate
+"(10 / 20)" |> parseAndEvaluate
