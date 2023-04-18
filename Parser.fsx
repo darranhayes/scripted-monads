@@ -95,7 +95,7 @@ module Parser =
         let charPosition = inputState.Position.CharPosition
         let start = inputState.Position.CurrentLineStartPosition
         {
-            CurrentLine = inputState.Chars[start..(charPosition + 20)]
+            CurrentLine = inputState.Chars[start..(charPosition + 60)]
             Line = inputState.Position.Line
             Column = inputState.Position.Column
             CharPosition = charPosition
@@ -274,12 +274,14 @@ module Parser =
     /// .>> keeps only the result of the left side parser.
     let (.>>) (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'a> =
         p1 .>>. p2
-        |>> (fun (x, y) -> x)
+        |>> (fun (x, _) -> x)
+        <?> getLabel p1
 
     /// >>. keeps only the result of the right side parser.
     let (>>.) (p1: Parser<'a>) (p2: Parser<'b>) : Parser<'b> =
         p1 .>>. p2
-        |>> (fun (x, y) -> y)
+        |>> (fun (_, y) -> y)
+        <?> getLabel p2
 
     let choice (list: Parser<'a> list) : Parser<'a> =
         List.reduce (<|>) list
@@ -547,17 +549,30 @@ let eval =
 let describe : Expr -> string =
     foldExpr
         string
-        (sprintf "%s + %s")
-        (sprintf "%s - %s")
-        (sprintf "%s * %s")
-        (sprintf "%s / %s")
+        (sprintf "(%s + %s)")
+        (sprintf "(%s - %s)")
+        (sprintf "(%s * %s)")
+        (sprintf "(%s / %s)")
+
+let (pExpr, exprRef) =
+    createParserForwardedToRef<Expr> ()
+
+let mapOp ((e1: 'a, opFn: 'a * 'a -> 'a), e2: 'a) =
+    opFn (e1, e2)
 
 let pConstant =
     pFloat <|> (pInt |>> double) .>> whitespaces
     |>> Constant <?> "constant"
 
-let bracketedExpression p =
-    betweenExclusive (pChar '(') p (pChar ')')
+let left =
+    pChar '(' .>> whitespaces
+
+let right =
+    pChar ')' .>> whitespaces
+
+let bracketedExpression =
+    (betweenExclusive left pExpr right) .>> whitespaces
+    <?> "bracketed expression"
 
 let pAddOp =
     pChar '+' >>% Add
@@ -570,28 +585,40 @@ let pDivOp =
 
 let pOp =
     (pAddOp <|> pSubOp <|> pMulOp <|> pDivOp) .>> whitespaces
+    <?> "op (+-*/)"
 
-let (pExpr, exprRef) =
-    createParserForwardedToRef<Expr> ()
+let pTerm =
+    (pConstant <|> bracketedExpression)
+    .>> whitespaces
 
-let expressionParser =
-    bracketedExpression pExpr <|>
-    bracketedExpression pConstant
+let binaryExpression =
+    ((pTerm .>>. pOp) .>>. pTerm) .>> whitespaces
+    |>> mapOp
+    <?> "binary expression"
 
 let pExprImplementation =
-    (pConstant .>>. pOp) .>>. pConstant
-    |>> fun ((e1, opFn), e2) -> opFn (e1, e2)
+    binaryExpression <|> pTerm
 
 exprRef.Value <- pExprImplementation
 
 let parseAndDescribe str =
-    str |> run expressionParser |> evaluateExpression (describe >> sprintf "'%s'")
+    str |> run pExpr |> evaluateExpression (describe >> sprintf "'%s'")
 
 let parseAndEvaluate str =
-    str |> run expressionParser |> evaluateExpression (eval >> sprintf "= %f")
+    str |> run pExpr |> evaluateExpression (eval >> sprintf "= %7.2f")
 
-"(0.5)" |> parseAndDescribe
-"(10 / 20)" |> parseAndDescribe
+"0.5"   |> parseAndEvaluate
+"10 + 5"   |> parseAndEvaluate
+"(2.5)" |> parseAndEvaluate
+"(((3.2)))" |> parseAndEvaluate
+"(0.5 + 0.4)" |> parseAndEvaluate // 0.9
+"(10 - 3)"    |> parseAndEvaluate // 7
+"(100 * 20)"  |> parseAndEvaluate // 2000
+"(100 / 20)"  |> parseAndEvaluate // 5
+"(((1 + 1)))" |> parseAndEvaluate // 2
+"(100 / (5 * (3 + (1 + 1))))" |> parseAndEvaluate // brackets to the right, 100 / 25 = 4
+"((90 / (3 / 2)) + 1)" |> parseAndEvaluate // brackets to the left, (90 / 1.5) + 1 = 60 + 1 = 61
 
-"(0.5)" |> parseAndEvaluate
-"(10 / 20)" |> parseAndEvaluate
+"((90 / (3 / 2)) + 1)" |> parseAndDescribe
+"((90 / (3 / 2) + 1)" |> parseAndDescribe // deliberate error, mismatched brackets
+
