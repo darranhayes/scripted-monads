@@ -522,8 +522,6 @@ module Parser =
 
         wrapperParser, parserRef
 
-let parser = Parser.Builder()
-
 module Ast =
     type Map<'a, 'b> = 'a -> 'b
     type Monoid<'a> = 'a -> 'a -> 'a
@@ -538,105 +536,105 @@ module Ast =
         | Parens of Expr
         | Negate of Expr
 
+    type folder<'a, 'b> = {
+        value: Map<double, 'b>
+        add: Monoid<'b>
+        subract: Monoid<'b>
+        multiply: Monoid<'b>
+        divide: Monoid<'b>
+        modulo: Monoid<'b>
+        paren: Map<'b, 'b>
+        negate: Map<'b, 'b>
+    }
+
+    let evaluateFolder<'a> : folder<'a,float> =
+        let negate x = -x
+        {
+            value = float
+            add = (+)
+            subract = (-)
+            multiply = (*)
+            divide = (/)
+            modulo = (%)
+            paren = id
+            negate = negate
+        }
+
+    let describeFolder<'a> : folder<'a, string> =
+        {
+            value = string
+            subract = sprintf "%s - %s"
+            multiply = sprintf "%s * %s"
+            divide = sprintf "%s / %s"
+            add = sprintf "%s + %s"
+            modulo = sprintf "%s %% %s"
+            paren = sprintf "(%s)"
+            negate = sprintf "-%s"
+        }
+
     let foldExpr
-        (value: Map<double, 'b>)
-        (add: Monoid<'b>)
-        (sub: Monoid<'b>)
-        (mul: Monoid<'b>)
-        (div: Monoid<'b>)
-        (modulo: Monoid<'b>)
-        (paren: Map<_, 'b>)
-        (neg: Map<_, 'b>)
-        (exprTree: Expr)
+        (folder: folder<'a, 'b>)
+        (expressionTree: Expr)
         : 'b =
             let rec fold expr =
                 match expr with
                 | Constant v ->
-                    value v
+                    folder.value v
                 | Add (e1, e2) ->
-                    add (fold e1) (fold e2)
+                    folder.add (fold e1) (fold e2)
                 | Subtract (e1, e2)->
-                    sub (fold e1) (fold e2)
+                    folder.subract (fold e1) (fold e2)
                 | Multiply (e1, e2)->
-                    mul (fold e1) (fold e2)
+                    folder.multiply (fold e1) (fold e2)
                 | Divide (e1, e2)->
-                    div (fold e1) (fold e2)
+                    folder.divide (fold e1) (fold e2)
                 | Modulo (e1, e2) ->
-                    modulo (fold e1) (fold e2)
+                    folder.modulo (fold e1) (fold e2)
                 | Parens e ->
                     match e with // simplify nested brackets
                     | Parens _ ->
                         fold e
                     | _ ->
-                        paren (fold e)
+                        folder.paren (fold e)
                 | Negate (e) ->
-                    neg (fold e)
-            fold exprTree
+                    folder.negate (fold e)
+            fold expressionTree
+
+    let evaluate (expressionTree: Expr) : float =
+        foldExpr evaluateFolder expressionTree
+
+    let describe (expressionTree: Expr) : string =
+        foldExpr describeFolder expressionTree
 
 open Parser
 open Ast
 
-let evaluateExpression =
-    foldExpr
-        float
-        (+)
-        (-)
-        (*)
-        (/)
-        (%)
-        id
-        (fun x -> -x)
+let negate x = -x
 
-let minTerm =
-    foldExpr
-        float
-        min
-        min
-        min
-        min
-        min
-        id
-        (fun x -> -x)
+let minFolder = {
+    value = float
+    subract = min
+    multiply = min
+    divide = min
+    add = min
+    modulo = min
+    paren = id
+    negate = negate
+}
 
-let maxTerm =
-    foldExpr
-        float
-        max
-        max
-        max
-        max
-        min
-        id
-        (fun x -> -x)
-
-let describeExpression : Expr -> string =
-    foldExpr
-        string
-        (sprintf "%s + %s")
-        (sprintf "%s - %s")
-        (sprintf "%s * %s")
-        (sprintf "%s / %s")
-        (sprintf "%s %% %s")
-        (sprintf "(%s)")
-        (sprintf "-%s")
+let maxFolder = {
+    value = float
+    subract = max
+    multiply = max
+    divide = max
+    add = max
+    modulo = max
+    paren = id
+    negate = negate
+}
 
 let (pExpr, exprRef) =
     createParserForwardedToRef<Expr> ()
-
-let pUnsignedFloat =
-    let resultToFloat (digits1, digits2) =
-        sprintf "%s.%s" digits1 digits2
-        |> float
-
-    // a float is sign, digits, point, digits (ignore exponents for now)
-    pDigits1 .>>. (pChar '.' >>. pDigits1)
-    |>> resultToFloat
-    <?> "unsigned float"
-
-let pUnsignedInt =
-    pDigits1
-    |>> float
-    <?> "unsigned int"
 
 let pConstant =
     pFloat <|> (pInt |>> float) .>> whitespaces
@@ -673,7 +671,6 @@ let pMulOps =
     pMulOp <|> pDivOp <|> pModOp
     <?> "op */%"
 
-
 let pOps =
     (pMulOps <|> pAddOps) .>> whitespaces
 
@@ -707,7 +704,7 @@ let evalAndPrint evaluator (input: string) =
 
     match result with
     | Success (expr, _) ->
-        printfn "\"%s\" -> \"%s\"" input (expr |> describeExpression)
+        printfn "\"%s\" -> \"%s\"" input (describe expr)
         printfn "= %O" (expr |> evaluator)
     | _ ->
         printResult result
@@ -716,16 +713,27 @@ let expressions =
     [
         "1+2+4"
         "-1+-2+---4"
+        "100 * 2 + 10"
+        "(100 * 2) + 10"
     ]
 
 printfn "\nArithmetic evaluation"
-expressions |> List.iter (evalAndPrint evaluateExpression)
+expressions |> List.iter (evalAndPrint evaluate)
 
 printfn "\nMin term evaluation"
-expressions |> List.iter (evalAndPrint minTerm)
+expressions |> List.iter (evalAndPrint (foldExpr minFolder))
 
 printfn "\nMax term evaluation"
-expressions |> List.iter (evalAndPrint maxTerm)
+expressions |> List.iter (evalAndPrint (foldExpr maxFolder))
 
 printfn "\nRaw"
 expressions |> List.iter (evalAndPrint id)
+
+// let pOp =
+//     anyOf ['+';'-';'*';'/'] .>> whitespaces
+
+// let taker =
+//     ((pDigit .>> whitespaces) .>>. (pOp .>> whitespaces))
+
+// run (take 4 taker) "1 + 2 * 3 + 4 / 7"
+
