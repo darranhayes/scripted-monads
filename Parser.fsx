@@ -587,6 +587,28 @@ let evaluateExpression =
         id
         (fun x -> -x)
 
+let minTerm =
+    foldExpr
+        float
+        min
+        min
+        min
+        min
+        min
+        id
+        (fun x -> -x)
+
+let maxTerm =
+    foldExpr
+        float
+        max
+        max
+        max
+        max
+        min
+        id
+        (fun x -> -x)
+
 let describeExpression : Expr -> string =
     foldExpr
         string
@@ -617,7 +639,7 @@ let pUnsignedInt =
     <?> "unsigned int"
 
 let pConstant =
-    pUnsignedFloat <|> (pUnsignedInt |>> float) .>> whitespaces
+    pFloat <|> (pInt |>> float) .>> whitespaces
     |>> Constant <?> "constant"
 
 let left =
@@ -631,20 +653,29 @@ let bracketedExpression =
     |>> Parens
     <?> "brackets"
 
-let pAddOp =
-    pChar '+' >>% Add
-let pSubOp =
-    pChar '-' >>% Subtract
-let pMulOp =
-    pChar '*' >>% Multiply
-let pDivOp =
-    pChar '/' >>% Divide
-let pModOp =
-    pChar '%' >>% Modulo
+let pAddOps =
+    let pAddOp =
+        pChar '+' >>% Add
+    let pSubOp =
+        pChar '-' >>% Subtract
 
-let pOp =
-    (pAddOp <|> pSubOp <|> pMulOp <|> pDivOp <|> pModOp) .>> whitespaces
-    <?> "op ()+-*/%"
+    pAddOp <|> pSubOp
+    <?> "op +-"
+
+let pMulOps =
+    let pMulOp =
+        pChar '*' >>% Multiply
+    let pDivOp =
+        pChar '/' >>% Divide
+    let pModOp =
+        pChar '%' >>% Modulo
+
+    pMulOp <|> pDivOp <|> pModOp
+    <?> "op */%"
+
+
+let pOps =
+    (pMulOps <|> pAddOps) .>> whitespaces
 
 let pNegative =
     (pManyChars1 (pChar '-')) .>>. pExpr
@@ -660,7 +691,7 @@ let pTerm =
     <?> "term"
 
 let binaryExpression =
-    ((pTerm .>>. pOp) .>>. pTerm) .>> whitespaces
+    ((pTerm .>>. pOps) .>>. pExpr) .>> whitespaces
     |>> fun ((e1, opFn), e2) ->
             opFn (e1, e2)
     <?> "binary expression"
@@ -670,29 +701,31 @@ let pExprImplementation =
 
 exprRef.Value <- pExprImplementation
 
-let evalAndPrint (input: string) =
-    let result = run pExprImplementation input //pExpr input
+let evalAndPrint evaluator (input: string) =
+    let result =
+        run pExprImplementation input
+
     match result with
     | Success (expr, _) ->
         printfn "\"%s\" -> \"%s\"" input (expr |> describeExpression)
-        printfn "= %O" (expr |> evaluateExpression)
-    | _ -> printResult result
+        printfn "= %O" (expr |> evaluator)
+    | _ ->
+        printResult result
 
-[
-    "0.5"
-    "10 + 5"
-    "(2.5)"
-    "(((3.2)))"
-    "0.5 + 0.4"
-    "10 - 3"
-    "100 * 20"
-    "10 % 9"
-    "100 / 20"
-    "((--(1 + 1)))"
-    "(100 / (5 * (3 + (1 + 1))))"
-    "((90 / -(3 / -2)) + 1)"
-    "10 % 9"
-    "((90 / (3 / 2)) + 1)"
-    "((90 / (3 / 2) + 1)"
-    "1+2*3+4"
-] |> List.iter evalAndPrint
+let expressions =
+    [
+        "1+2+4"
+        "-1+-2+---4"
+    ]
+
+printfn "\nArithmetic evaluation"
+expressions |> List.iter (evalAndPrint evaluateExpression)
+
+printfn "\nMin term evaluation"
+expressions |> List.iter (evalAndPrint minTerm)
+
+printfn "\nMax term evaluation"
+expressions |> List.iter (evalAndPrint maxTerm)
+
+printfn "\nRaw"
+expressions |> List.iter (evalAndPrint id)
