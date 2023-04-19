@@ -87,6 +87,38 @@ module Parser =
     let runOnInput (parser: Parser<'a>) (input: InputState) : ParseResult<'a * InputState> =
         parser.ParserFn input
 
+    /// returnP lifts a normal value into the world of parsers.
+    let returnP (x: 'a) : Parser<'a> =
+        let label = sprintf "%A" x
+        let innerFn input =
+            Success (x, input)
+        Parser.create innerFn label
+
+
+    /// bindP chains the result of a parser to another parser-producing function.
+    let bindP (f: 'a -> Parser<'b>) (p: Parser<'a>) : Parser<'b> =
+        let label = "unknown"
+        let innerFn input =
+            match runOnInput p input with
+            | Failure (label, error, position) ->
+                Failure (label, error, position)
+            | Success (value1, remainder1) ->
+                let newParser = f value1
+                runOnInput newParser remainder1
+        Parser.create innerFn label
+
+    type Builder() =
+        member this.Return (f: 'a) : Parser<'a> =
+            returnP f
+
+        member this.ReturnFrom f =
+            f
+
+        member this.Bind (m: Parser<'a>, f: 'a -> Parser<'b>) : Parser<'b> =
+            bindP f m
+
+    let private parser = Builder()
+
     /// Run the parser on a string
     let run (parser: Parser<'a>) (inputStr: string) : ParseResult<'a * InputState> =
         runOnInput parser (fromString inputStr)
@@ -152,7 +184,7 @@ module Parser =
 
             printfn "Line:%i Col:%i Error parsing %s\n%s\n%s" linePosition columnPosition label text failureCaret
         | Success (value, inputState) ->
-            printfn "Success: %A" value
+            printfn "Success: %A. Remaining: %s" value inputState.remaining
 
     let setLabel (p: Parser<'a>) (newLabel: string) : Parser<'a> =
         let innerFn input =
@@ -167,25 +199,6 @@ module Parser =
 
     let getLabel (p: Parser<'a>) : string =
         p.Label
-
-    /// returnP lifts a normal value into the world of parsers.
-    let returnP (x: 'a) : Parser<'a> =
-        let label = sprintf "%A" x
-        let innerFn input =
-            Success (x, input)
-        Parser.create innerFn label
-
-    /// bindP chains the result of a parser to another parser-producing function.
-    let bindP (f: 'a -> Parser<'b>) (p: Parser<'a>) : Parser<'b> =
-        let label = "unknown"
-        let innerFn input =
-            match runOnInput p input with
-            | Failure (label, error, position) ->
-                Failure (label, error, position)
-            | Success (value1, remainder1) ->
-                let newParser = f value1
-                runOnInput newParser remainder1
-        Parser.create innerFn label
 
     /// bindP
     let (>>=) (p: Parser<'a>) (f: 'a -> Parser<'b>) : Parser<'b> =
@@ -418,6 +431,19 @@ module Parser =
         separateBy (pManyChars pTextChar) pLinebreak
         <?> "multiple lines of text separated by any-style line breaks"
 
+    let rec take (n: int) (p: Parser<'a>) =
+        if n = 0 then
+            returnP []
+        else
+            parser {
+                let! c = p
+                let! cs = take (n-1) p
+                return c::cs
+            }
+
+    let rec takeString (n: int) (p: Parser<char>) =
+        take n p |>> List.toArray |>> System.String
+
     (* Numbers *)
 
     let pDigit =
@@ -495,6 +521,8 @@ module Parser =
             { ParserFn = innerFn; Label = "unknown" }
 
         wrapperParser, parserRef
+
+let parser = Parser.Builder()
 
 module Ast =
     type Map<'a, 'b> = 'a -> 'b
@@ -643,7 +671,7 @@ let pExprImplementation =
 exprRef.Value <- pExprImplementation
 
 let evalAndPrint (input: string) =
-    let result = run pExpr input
+    let result = run pExprImplementation input //pExpr input
     match result with
     | Success (expr, _) ->
         printfn "\"%s\" -> \"%s\"" input (expr |> describeExpression)
@@ -666,4 +694,5 @@ let evalAndPrint (input: string) =
     "10 % 9"
     "((90 / (3 / 2)) + 1)"
     "((90 / (3 / 2) + 1)"
+    "1+2*3+4"
 ] |> List.iter evalAndPrint
