@@ -496,72 +496,100 @@ module Parser =
 
         wrapperParser, parserRef
 
+module Ast =
+    type Map<'a, 'b> = 'a -> 'b
+    type Monoid<'a> = 'a -> 'a -> 'a
+
+    type Expr =
+        | Constant of double
+        | Add of Expr * Expr
+        | Subtract of Expr * Expr
+        | Multiply of Expr * Expr
+        | Divide of Expr * Expr
+        | Modulo of Expr * Expr
+        | Parens of Expr
+        | Negate of Expr
+
+    let foldExpr
+        (value: Map<double, 'b>)
+        (add: Monoid<'b>)
+        (sub: Monoid<'b>)
+        (mul: Monoid<'b>)
+        (div: Monoid<'b>)
+        (modulo: Monoid<'b>)
+        (paren: Map<_, 'b>)
+        (neg: Map<_, 'b>)
+        (exprTree: Expr)
+        : 'b =
+            let rec fold expr =
+                match expr with
+                | Constant v ->
+                    value v
+                | Add (e1, e2) ->
+                    add (fold e1) (fold e2)
+                | Subtract (e1, e2)->
+                    sub (fold e1) (fold e2)
+                | Multiply (e1, e2)->
+                    mul (fold e1) (fold e2)
+                | Divide (e1, e2)->
+                    div (fold e1) (fold e2)
+                | Modulo (e1, e2) ->
+                    modulo (fold e1) (fold e2)
+                | Parens e ->
+                    match e with // simplify nested brackets
+                    | Parens _ ->
+                        fold e
+                    | _ ->
+                        paren (fold e)
+                | Negate (e) ->
+                    neg (fold e)
+            fold exprTree
+
 open Parser
-open InputState
+open Ast
 
-let evaluateExpression expressionEvaluator (result: ParseResult<'a * InputState>) =
-    match result with
-    | Failure _ ->
-        printResult result
-    | Success (value, _) ->
-        printfn "%s" (expressionEvaluator value)
-
-type Map<'a, 'b> = 'a -> 'b
-type Monoid<'a> = 'a -> 'a -> 'a
-
-type Expr =
-    | Constant of double
-    | Add of Expr * Expr
-    | Sub of Expr * Expr
-    | Mul of Expr * Expr
-    | Div of Expr * Expr
-
-let foldExpr
-    (value: Map<double, 'b>)
-    (add: Monoid<'b>)
-    (sub: Monoid<'b>)
-    (mul: Monoid<'b>)
-    (div: Monoid<'b>)
-    (exprTree: Expr)
-    : 'b =
-        let rec fold expr =
-            match expr with
-            | Constant v ->
-                value v
-            | Add (e1, e2) ->
-                add (fold e1) (fold e2)
-            | Sub (e1, e2)->
-                sub (fold e1) (fold e2)
-            | Mul (e1, e2)->
-                mul (fold e1) (fold e2)
-            | Div (e1, e2)->
-                div (fold e1) (fold e2)
-        fold exprTree
-
-let eval =
+let evaluateExpression =
     foldExpr
         float
         (+)
         (-)
         (*)
         (/)
+        (%)
+        id
+        (fun x -> -x)
 
-let describe : Expr -> string =
+let describeExpression : Expr -> string =
     foldExpr
         string
-        (sprintf "(%s + %s)")
-        (sprintf "(%s - %s)")
-        (sprintf "(%s * %s)")
-        (sprintf "(%s / %s)")
+        (sprintf "%s + %s")
+        (sprintf "%s - %s")
+        (sprintf "%s * %s")
+        (sprintf "%s / %s")
+        (sprintf "%s %% %s")
+        (sprintf "(%s)")
+        (sprintf "-%s")
 
 let (pExpr, exprRef) =
     createParserForwardedToRef<Expr> ()
 
-let mapOp ((e1: 'a, opFn: 'a * 'a -> 'a), e2: 'a) =
-    opFn (e1, e2)
+let pUnsignedFloat =
+    let resultToFloat (digits1, digits2) =
+        sprintf "%s.%s" digits1 digits2
+        |> float
+
+    // a float is sign, digits, point, digits (ignore exponents for now)
+    pDigits1 .>>. (pChar '.' >>. pDigits1)
+    |>> resultToFloat
+    <?> "unsigned float"
+
+let pUnsignedInt =
+    pDigits1
+    |>> float
+    <?> "unsigned int"
 
 let pConstant =
-    pFloat <|> (pInt |>> double) .>> whitespaces
+    pUnsignedFloat <|> (pUnsignedInt |>> float) .>> whitespaces
     |>> Constant <?> "constant"
 
 let left =
@@ -572,28 +600,41 @@ let right =
 
 let bracketedExpression =
     (betweenExclusive left pExpr right) .>> whitespaces
-    <?> "bracketed expression"
+    |>> Parens
+    <?> "brackets"
 
 let pAddOp =
     pChar '+' >>% Add
 let pSubOp =
-    pChar '-' >>% Sub
+    pChar '-' >>% Subtract
 let pMulOp =
-    pChar '*' >>% Mul
+    pChar '*' >>% Multiply
 let pDivOp =
-    pChar '/' >>% Div
+    pChar '/' >>% Divide
+let pModOp =
+    pChar '%' >>% Modulo
 
 let pOp =
-    (pAddOp <|> pSubOp <|> pMulOp <|> pDivOp) .>> whitespaces
-    <?> "op (+-*/)"
+    (pAddOp <|> pSubOp <|> pMulOp <|> pDivOp <|> pModOp) .>> whitespaces
+    <?> "op ()+-*/%"
+
+let pNegative =
+    (pManyChars1 (pChar '-')) .>>. pExpr
+    |>> function
+        | (cs, expr) when cs.Length % 2 = 0 ->
+            expr
+        | (_, expr) ->
+            Negate expr
+    <?> "negation"
 
 let pTerm =
-    (pConstant <|> bracketedExpression)
-    .>> whitespaces
+    pConstant <|> pNegative <|> bracketedExpression
+    <?> "term"
 
 let binaryExpression =
     ((pTerm .>>. pOp) .>>. pTerm) .>> whitespaces
-    |>> mapOp
+    |>> fun ((e1, opFn), e2) ->
+            opFn (e1, e2)
     <?> "binary expression"
 
 let pExprImplementation =
@@ -601,24 +642,28 @@ let pExprImplementation =
 
 exprRef.Value <- pExprImplementation
 
-let parseAndDescribe str =
-    str |> run pExpr |> evaluateExpression (describe >> sprintf "'%s'")
+let evalAndPrint (input: string) =
+    let result = run pExpr input
+    match result with
+    | Success (expr, _) ->
+        printfn "\"%s\" -> \"%s\"" input (expr |> describeExpression)
+        printfn "= %O" (expr |> evaluateExpression)
+    | _ -> printResult result
 
-let parseAndEvaluate str =
-    str |> run pExpr |> evaluateExpression (eval >> sprintf "= %7.2f")
-
-"0.5"   |> parseAndEvaluate
-"10 + 5"   |> parseAndEvaluate
-"(2.5)" |> parseAndEvaluate
-"(((3.2)))" |> parseAndEvaluate
-"(0.5 + 0.4)" |> parseAndEvaluate // 0.9
-"(10 - 3)"    |> parseAndEvaluate // 7
-"(100 * 20)"  |> parseAndEvaluate // 2000
-"(100 / 20)"  |> parseAndEvaluate // 5
-"(((1 + 1)))" |> parseAndEvaluate // 2
-"(100 / (5 * (3 + (1 + 1))))" |> parseAndEvaluate // brackets to the right, 100 / 25 = 4
-"((90 / (3 / 2)) + 1)" |> parseAndEvaluate // brackets to the left, (90 / 1.5) + 1 = 60 + 1 = 61
-
-"((90 / (3 / 2)) + 1)" |> parseAndDescribe
-"((90 / (3 / 2) + 1)" |> parseAndDescribe // deliberate error, mismatched brackets
-
+[
+    "0.5"
+    "10 + 5"
+    "(2.5)"
+    "(((3.2)))"
+    "0.5 + 0.4"
+    "10 - 3"
+    "100 * 20"
+    "10 % 9"
+    "100 / 20"
+    "((--(1 + 1)))"
+    "(100 / (5 * (3 + (1 + 1))))"
+    "((90 / -(3 / -2)) + 1)"
+    "10 % 9"
+    "((90 / (3 / 2)) + 1)"
+    "((90 / (3 / 2) + 1)"
+] |> List.iter evalAndPrint
