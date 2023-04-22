@@ -114,6 +114,9 @@ module Parser =
         member this.ReturnFrom f =
             f
 
+        member this.Zero() =
+                    this.Return ()
+
         member this.Bind (m: Parser<'a>, f: 'a -> Parser<'b>) : Parser<'b> =
             bindP f m
 
@@ -728,12 +731,3 @@ expressions |> List.iter (evalAndPrint (foldExpr maxFolder))
 
 printfn "\nRaw"
 expressions |> List.iter (evalAndPrint id)
-
-// let pOp =
-//     anyOf ['+';'-';'*';'/'] .>> whitespaces
-
-// let taker =
-//     ((pDigit .>> whitespaces) .>>. (pOp .>> whitespaces))
-
-// run (take 4 taker) "1 + 2 * 3 + 4 / 7"
-
