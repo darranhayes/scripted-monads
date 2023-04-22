@@ -3,15 +3,34 @@
 open System
 open Stack
 
+/// <summary>
+/// Order of Precedence taken from wikipedia:
+/// https://en.wikipedia.org/wiki/Order_of_operations#Programming_languages
+/// </summary>
 let precendence (t: string) =
-    let p =
-        match t with
-        | "*" -> 3
-        | "/" -> 3
-        | "+" -> 4
-        | "-" -> 4
-        | _ -> failwith "not an op"
-    0 - p
+    match t with
+    | "*" -> 3
+    | "/" -> 3
+    | "+" -> 4
+    | "-" -> 4
+    | _ -> failwith "not an op"
+
+type Associativity =
+    | Left
+    | Right
+
+let operatorAssociatesTo (t: string) =
+    match t with
+    | "*" -> Left
+    | "/" -> Left
+    | "+" -> Left
+    | "-" -> Left
+    | _ -> failwith "not an op"
+
+let associateTo (direction: Associativity) =
+    match direction with
+    | Left -> (>=)
+    | Right -> (>)
 
 let (|Operator|Term|) (t: string) =
     match t with
@@ -40,9 +59,11 @@ let rec handleOperator (currentOperator: string) (parseStack: Stack<string>) : S
     let previousOperator =
         Stack.tryPeak 1 parseStack
 
+    let compare = associateTo (operatorAssociatesTo currentOperator)
+
     match currentOperator, previousOperator with
     | current, Some previous
-        when precendence current <= precendence previous ->
+        when compare (precendence current) (precendence previous) ->
             rebuildTerm parseStack
             |> handleOperator current
     | current, _ ->
