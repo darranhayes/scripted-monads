@@ -27,7 +27,7 @@ module Stack =
         | (Value (v, stack)) ->
             v , stack
 
-    let tryPeak (n: int) (stack: Stack<'a>) : Option<'a> =
+    let tryPeek (n: int) (stack: Stack<'a>) : Option<'a> =
         let rec loop stack i =
             match stack with
             | Empty ->
@@ -39,8 +39,8 @@ module Stack =
                     loop rest (i+1)
         loop stack 0
 
-    let peak (n: int) (stack: Stack<'a>) : 'a =
-        match tryPeak n stack with
+    let peek (n: int) (stack: Stack<'a>) : 'a =
+        match tryPeek n stack with
         | None ->
             failwith "empty"
         | Some v ->

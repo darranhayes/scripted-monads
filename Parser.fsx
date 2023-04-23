@@ -182,7 +182,6 @@ module Parser =
             let text = position.CurrentLine
             let columnPosition = position.Column
             let linePosition = position.Line
-            let overallPosition = position.CharPosition
             let failureCaret = sprintf "%*s^%s" columnPosition "" error
 
             printfn "Line:%i Col:%i Error parsing %s\n%s\n%s" linePosition columnPosition label text failureCaret
@@ -312,9 +311,11 @@ module Parser =
     /// many1 matches one or more occurrences of the specified parser.
     let many1 (p: Parser<'a>) : Parser<'a list> =
         let label = sprintf "many %s" (getLabel p)
-        p >>= (fun head ->
-        many p >>= (fun tail ->
-            returnP (head::tail)))
+        p >>= (
+            fun head ->
+                many p >>= (
+                    fun tail ->
+                        returnP (head::tail)))
         <?> label
 
     let anyOf listOfChars =
@@ -536,6 +537,7 @@ module Ast =
         | Multiply of Expr * Expr
         | Divide of Expr * Expr
         | Modulo of Expr * Expr
+        | Power of Expr * Expr
         | Parens of Expr
         | Negate of Expr
 
@@ -546,6 +548,7 @@ module Ast =
         multiply: Monoid<'b>
         divide: Monoid<'b>
         modulo: Monoid<'b>
+        power: Monoid<'b>
         paren: Map<'b, 'b>
         negate: Map<'b, 'b>
     }
@@ -559,6 +562,7 @@ module Ast =
             multiply = (*)
             divide = (/)
             modulo = (%)
+            power = (fun x y -> pown x (int y))
             paren = id
             negate = negate
         }
@@ -571,8 +575,22 @@ module Ast =
             divide = sprintf "%s / %s"
             add = sprintf "%s + %s"
             modulo = sprintf "%s %% %s"
+            power = sprintf "%s**%s"
             paren = sprintf "(%s)"
             negate = sprintf "-%s"
+        }
+
+    let describeEvaluationOrder<'a> =
+        {
+            value = string
+            subract = sprintf "(%s - %s)"
+            multiply = sprintf "(%s * %s)"
+            divide = sprintf "(%s / %s)"
+            add = sprintf "(%s + %s)"
+            modulo = sprintf "(%s %% %s)"
+            power = sprintf "(%s**%s)"
+            paren = sprintf "%s"
+            negate = sprintf "(-%s)"
         }
 
     let foldExpr
@@ -593,6 +611,8 @@ module Ast =
                     folder.divide (fold e1) (fold e2)
                 | Modulo (e1, e2) ->
                     folder.modulo (fold e1) (fold e2)
+                | Power (e1, e2) ->
+                    folder.power (fold e1) (fold e2)
                 | Parens e ->
                     match e with // simplify nested brackets
                     | Parens _ ->
@@ -609,75 +629,102 @@ module Ast =
     let describe (expressionTree: Expr) : string =
         foldExpr describeFolder expressionTree
 
+module Reporting =
+    open Parser
+    open Ast
+
+    let negate x = -x
+
+    let minFolder = {
+        value = float
+        subract = min
+        multiply = min
+        divide = min
+        add = min
+        modulo = min
+        power = min
+        paren = id
+        negate = negate
+    }
+
+    let maxFolder = {
+        value = float
+        subract = max
+        multiply = max
+        divide = max
+        add = max
+        modulo = max
+        power = max
+        paren = id
+        negate = negate
+    }
+
+    let evalAndPrint expr evaluator (input: string) =
+        let result =
+            run expr input
+
+        match result with
+        | Success (expr, _) ->
+            printfn "\"%s\" -> \"%s\" == %O" input (expr |> describe) (expr |> evaluator)
+        | _ ->
+            printResult result
+
 open Parser
 open Ast
-
-let negate x = -x
-
-let minFolder = {
-    value = float
-    subract = min
-    multiply = min
-    divide = min
-    add = min
-    modulo = min
-    paren = id
-    negate = negate
-}
-
-let maxFolder = {
-    value = float
-    subract = max
-    multiply = max
-    divide = max
-    add = max
-    modulo = max
-    paren = id
-    negate = negate
-}
 
 let (pExpr, exprRef) =
     createParserForwardedToRef<Expr> ()
 
-let pConstant =
+/// https://riptutorial.com/fsharp/example/11401/understanding-monads-comes-from-practice
+let separateByThenReduce
+    (p: Parser<Expr>) (sep: Parser<Expr * Expr -> Expr>) : Parser<Expr> =
+    let ots =
+        optional (sep .>>. p)
+    let rec loop v =
+        let thing = function
+            | Some (s, n) ->
+                loop (s (v, n))
+            | None ->
+                returnP v
+        ots >>= thing
+    p >>= loop
+
+type OperatorPrecedence<'a> = {
+    CombinedOperators: Parser<('a * 'a -> 'a)>
+}
+
+let pOperators (operatesOn: Parser<Expr>) (operatorLevels: OperatorPrecedence<Expr> list)
+    : Parser<Expr> =
+    let label =
+        operatorLevels
+        |> List.map (fun op -> op.CombinedOperators)
+        |> List.map getLabel
+        |> List.fold (fun s i -> s + " " + i + ";") "Operators:"
+
+    let rec loop (acc: Parser<Expr>) (operatorLevels: OperatorPrecedence<Expr> list) =
+        match operatorLevels with
+        | [] ->
+            acc
+        | ({ CombinedOperators = level})::remainingLevels ->
+            loop (separateByThenReduce acc level) remainingLevels
+
+    loop operatesOn operatorLevels
+    <?> label
+
+let pConstant: Parser<Expr> =
     pFloat <|> (pInt |>> float) .>> whitespaces
     |>> Constant <?> "constant"
 
-let left =
-    pChar '(' .>> whitespaces
+let pBracketedExpression: Parser<Expr> =
+    let left =
+        pChar '(' .>> whitespaces
+    let right =
+        pChar ')' .>> whitespaces
 
-let right =
-    pChar ')' .>> whitespaces
-
-let bracketedExpression =
     (betweenExclusive left pExpr right) .>> whitespaces
-    |>> Parens
-    <?> "brackets"
+    |>> Parens <?> "brackets"
 
-let pAddOps =
-    let pAddOp =
-        pChar '+' >>% Add
-    let pSubOp =
-        pChar '-' >>% Subtract
-
-    pAddOp <|> pSubOp
-    <?> "op +-"
-
-let pMulOps =
-    let pMulOp =
-        pChar '*' >>% Multiply
-    let pDivOp =
-        pChar '/' >>% Divide
-    let pModOp =
-        pChar '%' >>% Modulo
-
-    pMulOp <|> pDivOp <|> pModOp
-    <?> "op */%"
-
-let pOps =
-    (pMulOps <|> pAddOps) .>> whitespaces
-
-let pNegative =
+let pNegation: Parser<Expr> =
     (pManyChars1 (pChar '-')) .>>. pExpr
     |>> function
         | (cs, expr) when cs.Length % 2 = 0 ->
@@ -686,48 +733,56 @@ let pNegative =
             Negate expr
     <?> "negation"
 
-let pTerm =
-    pConstant <|> pNegative <|> bracketedExpression
-    <?> "term"
+let pTerm: Parser<Expr> =
+    pConstant <|> pNegation <|> pBracketedExpression
 
-let binaryExpression =
-    ((pTerm .>>. pOps) .>>. pExpr) .>> whitespaces
-    |>> fun ((e1, opFn), e2) ->
-            opFn (e1, e2)
-    <?> "binary expression"
+let pPower =
+    pString "**" >>% Power .>> whitespaces <?> "**"
+let pMulOp =
+    pChar '*' >>% Multiply .>> whitespaces <?> "*"
+let pDivOp =
+    pChar '/' >>% Divide .>> whitespaces <?> "/"
+let pModOp =
+    pChar '%' >>% Modulo .>> whitespaces <?> "%"
+let pAddOp =
+    pChar '+' >>% Add .>> whitespaces <?> "+"
+let pSubOp =
+    pChar '-' >>% Subtract .>> whitespaces <?> "-"
 
-let pExprImplementation =
-    binaryExpression <|> pTerm
+let operatorsTable: OperatorPrecedence<Expr> list = [
+    { CombinedOperators = pPower }
+    { CombinedOperators = pMulOp <|> pDivOp <|> pModOp }
+    { CombinedOperators = pAddOp <|> pSubOp }
+]
+
+let pExprImplementation: Parser<Expr> =
+    pOperators pTerm operatorsTable
 
 exprRef.Value <- pExprImplementation
 
-let evalAndPrint evaluator (input: string) =
-    let result =
-        run pExprImplementation input
-
-    match result with
-    | Success (expr, _) ->
-        printfn "\"%s\" -> \"%s\"" input (describe expr)
-        printfn "= %O" (expr |> evaluator)
-    | _ ->
-        printResult result
-
 let expressions =
     [
-        "1+2+4"
-        "-1+-2+---4"
-        "100 * 2 + 10"
-        "(100 * 2) + 10"
+        "1+2+3+4+5"
+        "2**3**4"
+        "-1 + -2 + ---4"
+        "100 * 3 + 10 % 2"
+        "100 * 3 + 10"
+        "(100 * 3) + 10.5"
     ]
 
+open Reporting
+
 printfn "\nArithmetic evaluation"
-expressions |> List.iter (evalAndPrint evaluate)
+expressions |> List.iter (evalAndPrint pExpr evaluate)
 
 printfn "\nMin term evaluation"
-expressions |> List.iter (evalAndPrint (foldExpr minFolder))
+expressions |> List.iter (evalAndPrint pExpr (foldExpr minFolder))
 
 printfn "\nMax term evaluation"
-expressions |> List.iter (evalAndPrint (foldExpr maxFolder))
+expressions |> List.iter (evalAndPrint pExpr (foldExpr maxFolder))
+
+printfn "\nOrder of evaluation"
+expressions |> List.iter (evalAndPrint pExpr (foldExpr describeEvaluationOrder))
 
 printfn "\nRaw"
-expressions |> List.iter (evalAndPrint id)
+expressions |> List.iter (evalAndPrint pExpr id)

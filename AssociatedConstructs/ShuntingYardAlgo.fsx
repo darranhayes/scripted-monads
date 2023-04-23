@@ -1,6 +1,5 @@
-#load "./AssociatedConstructs/Stack.fsx"
+#load "./Stack.fsx"
 
-open System
 open Stack
 
 let (|Operator|Constant|) (token: string) =
@@ -59,7 +58,7 @@ let rebuildTerm (parseStack: Stack<string>) : Stack<string> =
 
 let rec handleOperator (currentOperator: string) (parseStack: Stack<string>) : Stack<string> =
     let previousOperator =
-        Stack.tryPeak 1 parseStack
+        Stack.tryPeek 1 parseStack
 
     let isHigher = associateTo (operatorAssociatesTo currentOperator)
 
