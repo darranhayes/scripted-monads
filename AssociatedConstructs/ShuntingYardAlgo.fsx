@@ -3,42 +3,44 @@
 open System
 open Stack
 
+let (|Operator|Constant|) (token: string) =
+    match token with
+    | "*" -> Operator token
+    | "/" -> Operator token
+    | "+" -> Operator token
+    | "-" -> Operator token
+    | n -> Constant n
+
 /// <summary>
 /// Order of Precedence taken from wikipedia:
 /// https://en.wikipedia.org/wiki/Order_of_operations#Programming_languages
 /// </summary>
 let precendence (t: string) =
     match t with
-    | "*" -> 3
-    | "/" -> 3
-    | "+" -> 4
-    | "-" -> 4
+    | Operator "*" -> 3
+    | Operator "/" -> 3
+    | Operator "+" -> 4
+    | Operator "-" -> 4
     | _ -> failwith "not an op"
 
 type Associativity =
     | Left
     | Right
 
-let operatorAssociatesTo (t: string) =
-    match t with
-    | "*" -> Left
-    | "/" -> Left
-    | "+" -> Left
-    | "-" -> Left
+/// Returns Left or Right associativity of the operator
+let operatorAssociatesTo (operator: string) =
+    match operator with
+    | Operator "*" -> Left
+    | Operator "/" -> Left
+    | Operator "+" -> Left
+    | Operator "-" -> Left
     | _ -> failwith "not an op"
 
+/// returns a comparer appropriate to the operator associativity
 let associateTo (direction: Associativity) =
     match direction with
     | Left -> (>=)
     | Right -> (>)
-
-let (|Operator|Term|) (t: string) =
-    match t with
-    | "*" -> Operator t
-    | "/" -> Operator t
-    | "+" -> Operator t
-    | "-" -> Operator t
-    | n -> Term n
 
 let rebuildTerm (parseStack: Stack<string>) : Stack<string> =
     let arg2, parseStack =
@@ -59,11 +61,13 @@ let rec handleOperator (currentOperator: string) (parseStack: Stack<string>) : S
     let previousOperator =
         Stack.tryPeak 1 parseStack
 
-    let compare = associateTo (operatorAssociatesTo currentOperator)
+    let isHigher = associateTo (operatorAssociatesTo currentOperator)
 
     match currentOperator, previousOperator with
+    // | ")", Some _ ->
+        // unwind until "(" and pop back as a single entry
     | current, Some previous
-        when compare (precendence current) (precendence previous) ->
+        when isHigher (precendence current) (precendence previous) ->
             rebuildTerm parseStack
             |> handleOperator current
     | current, _ ->
@@ -88,7 +92,7 @@ let sya (exprS: string) =
             | Operator (operator) ->
                 handleOperator operator parseStack
                 |> loop tokens
-            | Term (term) ->
+            | Constant (term) ->
                 loop tokens (Stack.push term parseStack)
 
     loop expr Stack.empty
