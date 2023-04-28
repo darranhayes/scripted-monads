@@ -5,6 +5,7 @@ type FList<'a> =
     | Empty
     | Cons of head: 'a * tail: FList<'a>
 
+[<RequireQualifiedAccessAttribute>]
 module FList =
     let ret x =
         Cons(x, Empty)
@@ -132,10 +133,10 @@ module FList =
         loop list initialState |> Cont.eval
 
     let concat (list1: FList<'a>) (list2: FList<'a>) : FList<'a> =
-        let cons i s = Cons(i, s)
         foldBack cons list1 list2
 
-    let (++) = concat
+    let (@) = concat
+    let (^+) x xs = cons x xs
 
     let tryTake (n: int) (list: FList<'a>) : FList<'a> option =
         let rec loop list i =
@@ -210,7 +211,7 @@ module FList =
                 let left, right =
                     xs
                     |> partition (predicate x)
-                quicksort left ++ ret x ++ quicksort right
+                quicksort left @ ret x @ quicksort right
         quicksort list
 
     let sort (list: FList<'a>) : FList<'a> =
@@ -272,11 +273,14 @@ module FList =
             let list = ofSeq m
             this.Bind(list, fn)
 
+let (@) = FList.concat
+let (^+) x xs = FList.cons x xs
+
 let flist = FList.Builder()
 
 flist {
     let! x = Cons('a', Cons('b', Empty))
-    let! y = Cons(1, Cons(2, Empty))
+    let! y = 1 ^+ 2 ^+ Empty
     let! z = [| '*'; '_'; '/' |] |> FList.ofSeq
     return (x, y, z)
 }
@@ -299,7 +303,7 @@ flist {
 
 flist {
     for i in 0..5..10 do
-        yield! Cons(i + 5, Cons(i + 6, Empty))
+        yield! i + 5 ^+ i + 6 ^+ Empty
 } |> FList.toString
 
 let lista = Cons(1, Cons(2, Cons(3, Empty)))
@@ -310,21 +314,21 @@ listc |> FList.toSeq
 
 listc |> FList.length
 
-let listd = Cons(100, Cons(200, Cons(300, Cons(400, Empty))))
+let listd = 100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
 
 let listSum =
-    Cons(100, Cons(200, Cons(300, Cons(400, Empty))))
+    100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
     |> FList.fold (+) 0
 
 
-let ll = Cons(lista, Cons(listb, Cons(listd, Empty)))
+let ll = lista ^+ listb ^+ listd ^+ Empty
 ll |> FList.flatten |> FList.reverse |> (FList.map (fun x -> x * 3)) |> FList.toString
 
 let random =
     let r = System.Random()
     fun () -> r.Next()
 
-let la = seq { for i in 1..500_000 -> random () } |> FList.ofSeq
+let la = seq { for i in 1..1000 -> random () } |> FList.ofSeq
 
 let lb = la |> FList.map (fun i -> i / 2)
 
@@ -351,6 +355,7 @@ let transactions =
     }
     |> FList.ofSeq
 
+FList.fold (+) 1122.73 transactions
 FList.scan (+) 1122.73 transactions |> FList.toSeq |> Seq.toArray
 
 type Charge =
@@ -368,9 +373,9 @@ FList.scanBack (fun charge acc ->
 
 FList.scanBack (+) (seq { 1; 2;3 } |> FList.ofSeq) 0
 
-seq { 1 .. 1_000_000 }
+seq { 1 .. 1000 }
 |> FList.ofSeq
-|> FList.trySkip 900_500
+|> FList.trySkip 500
 |> Option.bind (FList.tryTake 5)
 
 let xonacci takeN initialState =
@@ -380,12 +385,12 @@ let xonacci takeN initialState =
             let xs = FList.tail list
             let sum = FList.reduce (+) list
             let newList =
-                FList.concat xs (FList.ret sum)
+                xs @ (FList.ret sum)
             let newTotal = total + 1
             Some (x, (newList, newTotal))
         else
             None
     FList.unfold generator (initialState, 0)
 
-Cons(0, Cons(1, Empty)) |> xonacci 30 |> FList.toString
-Cons(0, Cons(0, Cons(0, Cons(0, Cons(1, Empty))))) |> xonacci 30 |> FList.toString
+0 ^+ 1 ^+ Empty |> xonacci 30 |> FList.toString |> printfn "%s"
+0 ^+ 0 ^+ 0 ^+ 0 ^+ 1 ^+ Empty |> xonacci 30 |> FList.toString |> printfn "%s"
