@@ -629,6 +629,8 @@ module Ast =
     let describe (expressionTree: Expr) : string =
         foldExpr describeFolder expressionTree
 
+    type Infix = Expr * Expr -> Expr
+
 module Reporting =
     open Parser
     open Ast
@@ -675,25 +677,48 @@ open Ast
 let (pExpr, exprRef) =
     createParserForwardedToRef<Expr> ()
 
-/// https://riptutorial.com/fsharp/example/11401/understanding-monads-comes-from-practice
-let separateByThenReduce
-    (p: Parser<Expr>) (sep: Parser<Expr * Expr -> Expr>) : Parser<Expr> =
+let inline sepBy (p: Parser<Expr>) (op: Parser<Infix>) stateFromFirstElement foldState resultFromState =
     let ots =
-        optional (sep .>>. p)
+        optional (op .>>. p)
     let rec loop v =
-        let thing = function
+        let calc x =
+            match x with
             | Some (s, n) ->
-                loop (s (v, n))
+                loop (foldState s v n)
             | None ->
-                returnP v
-        ots >>= thing
-    p >>= loop
+                stateFromFirstElement v
+        ots >>= calc
+    p >>= loop |> resultFromState
+
+let chainL1  (p: Parser<Expr>) (op: Parser<Infix>) =
+    sepBy
+        p
+        op
+        returnP
+        (fun f x y -> f (x, y))
+        id
+
+// let chainR1 (p: Parser<Expr>) (op: Parser<Expr * Expr -> Expr>) : Parser<Expr> =
+//     let stateFromFirstElement = (fun (x0: Expr) -> [(Unchecked.defaultof<Expr>, x0)])
+//     let foldState = (fun acc op x -> (op, x)::acc)
+//     let resultFromState =
+//         function // is called with (op, y) list in reverse order
+//         | ((op, y)::tl) ->
+//             let rec calc op y lst =
+//                 match lst with
+//                 | (op2, x)::tl -> calc op2 (op (x, y)) tl
+//                 | [] -> y // op is null
+//             calc op y tl
+//         | [] -> // shouldn't happen
+//                 failwith "chainr1"
+
+//     sepBy p op stateFromFirstElement (fun f x y -> f (x, y)) id //resultFromState
 
 type OperatorPrecedence<'a> = {
-    CombinedOperators: Parser<('a * 'a -> 'a)>
+    CombinedOperators: Parser<'a>
 }
 
-let pOperators (operatesOn: Parser<Expr>) (operatorLevels: OperatorPrecedence<Expr> list)
+let pOperators (operatesOn: Parser<Expr>) (operatorLevels: OperatorPrecedence<Infix> list)
     : Parser<Expr> =
     let label =
         operatorLevels
@@ -701,12 +726,12 @@ let pOperators (operatesOn: Parser<Expr>) (operatorLevels: OperatorPrecedence<Ex
         |> List.map getLabel
         |> List.fold (fun s i -> s + " " + i + ";") "Operators:"
 
-    let rec loop (acc: Parser<Expr>) (operatorLevels: OperatorPrecedence<Expr> list) =
+    let rec loop (acc: Parser<Expr>) (operatorLevels: OperatorPrecedence<Infix> list) =
         match operatorLevels with
         | [] ->
             acc
         | ({ CombinedOperators = level})::remainingLevels ->
-            loop (separateByThenReduce acc level) remainingLevels
+            loop (chainL1 acc level) remainingLevels
 
     loop operatesOn operatorLevels
     <?> label
@@ -733,9 +758,6 @@ let pNegation: Parser<Expr> =
             Negate expr
     <?> "negation"
 
-let pTerm: Parser<Expr> =
-    pConstant <|> pNegation <|> pBracketedExpression
-
 let pPower =
     pString "**" >>% Power .>> whitespaces <?> "**"
 let pMulOp =
@@ -749,7 +771,10 @@ let pAddOp =
 let pSubOp =
     pChar '-' >>% Subtract .>> whitespaces <?> "-"
 
-let operatorsTable: OperatorPrecedence<Expr> list = [
+let pTerm: Parser<Expr> =
+    pConstant <|> pNegation <|> pBracketedExpression
+
+let operatorsTable: OperatorPrecedence<Infix> list = [
     { CombinedOperators = pPower }
     { CombinedOperators = pMulOp <|> pDivOp <|> pModOp }
     { CombinedOperators = pAddOp <|> pSubOp }
