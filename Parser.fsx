@@ -640,6 +640,7 @@ module Ast =
         | Divide of Expr * Expr
         | Modulo of Expr * Expr
         | Power of Expr * Expr
+        | Equals of Expr * Expr
         | Parens of Expr
         | Negate of Expr
 
@@ -651,11 +652,12 @@ module Ast =
         divide: Monoid<'b>
         modulo: Monoid<'b>
         power: Monoid<'b>
+        equals: 'b -> 'b -> 'b
         paren: Map<'b, 'b>
         negate: Map<'b, 'b>
     }
 
-    let evaluateFolder<'a> : folder<'a,float> =
+    let evaluateFolder<'a> =
         let negate x = -x
         {
             value = float
@@ -665,11 +667,12 @@ module Ast =
             divide = (/)
             modulo = (%)
             power = fun x y -> x**y
+            equals = fun x y -> if x = y then 1.0 else 0.0
             paren = id
             negate = negate
         }
 
-    let describeFolder<'a> : folder<'a, string> =
+    let describeFolder<'a> =
         {
             value = string
             subract = sprintf "%s - %s"
@@ -678,6 +681,7 @@ module Ast =
             add = sprintf "%s + %s"
             modulo = sprintf "%s %% %s"
             power = sprintf "%s^%s"
+            equals = sprintf "%s = %s"
             paren = sprintf "(%s)"
             negate = sprintf "-%s"
         }
@@ -691,6 +695,7 @@ module Ast =
             add = sprintf "(%s + %s)"
             modulo = sprintf "(%s %% %s)"
             power = sprintf "(%s^%s)"
+            equals = sprintf "(%s = %s)"
             paren = sprintf "%s"
             negate = sprintf "(-%s)"
         }
@@ -698,7 +703,7 @@ module Ast =
     let foldExpr
         (folder: folder<'a, 'b>)
         (expressionTree: Expr)
-        : 'b =
+        =
             let rec fold expr =
                 match expr with
                 | Constant v ->
@@ -715,6 +720,8 @@ module Ast =
                     folder.modulo (fold e1) (fold e2)
                 | Power (e1, e2) ->
                     folder.power (fold e1) (fold e2)
+                | Equals (e1, e2) ->
+                    folder.equals (fold e1) (fold e2)
                 | Parens e ->
                     match e with // simplify nested brackets
                     | Parens _ ->
@@ -745,6 +752,7 @@ module Reporting =
         add = min
         modulo = min
         power = min
+        equals = min
         paren = id
         negate = negate
     }
@@ -757,6 +765,7 @@ module Reporting =
         add = max
         modulo = max
         power = max
+        equals = max
         paren = id
         negate = negate
     }
@@ -817,13 +826,18 @@ let pTerm =
 let pOperand =
     ws >>. (pTerm <|> pNegation <|> pBrackets) .>> ws
 
-let pOperators =
+let pExpressions =
     buildOperatorPrecedenceParser pOperand operatorsTable
 
-let pExprImplementation =
-    pOperators
+let pEquality =
+    let eq = ws >>. (pChar '=') .>> ws
+    pExpr .>>. eq .>>. pExpr
+    |>> fun ((x, _), y) -> Equals (x, y)
 
-do exprRef.Value <- pExprImplementation
+do exprRef.Value <- pExpressions
+
+let pStatement =
+    pEquality <|> pExpressions
 
 let expressions =
     [
@@ -833,21 +847,23 @@ let expressions =
         "100 * 3 + 10 % 2"
         "100 * 3 - 1 + 10^3"
         "  ( 100 * 3 ) + 10.5 "
+        " 3 * 4 + 1 = 1 + 3 * 4"
+        "3*4+1=1+3*4-1"
     ]
 
 open Reporting
 
 printfn "\nArithmetic evaluation"
-expressions |> List.iter (evalAndPrint pExpr evaluate)
+expressions |> List.iter (evalAndPrint pStatement evaluate)
 
 printfn "\nMin term evaluation"
-expressions |> List.iter (evalAndPrint pExpr (foldExpr minFolder))
+expressions |> List.iter (evalAndPrint pStatement (foldExpr minFolder))
 
 printfn "\nMax term evaluation"
-expressions |> List.iter (evalAndPrint pExpr (foldExpr maxFolder))
+expressions |> List.iter (evalAndPrint pStatement (foldExpr maxFolder))
 
 printfn "\nOrder of evaluation"
-expressions |> List.iter (evalAndPrint pExpr (foldExpr describeEvaluationOrder))
+expressions |> List.iter (evalAndPrint pStatement (foldExpr describeEvaluationOrder))
 
 printfn "\nRaw"
-expressions |> List.iter (evalAndPrint pExpr id)
+expressions |> List.iter (evalAndPrint pStatement id)
