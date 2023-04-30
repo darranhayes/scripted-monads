@@ -344,13 +344,27 @@ module Parser =
 
     /// separateBy1 parses one or more occurrences of a parser with a separator.
     let separateBy1 (p: Parser<'a>) (separator: Parser<'b>) : Parser<'a list> =
-        p .>>. many (separator >>. p)
+        p .>>. (many (separator >>. p))
         |>> List.Cons
         <?> sprintf "list of %s separated by %s" (getLabel p) (getLabel p)
 
-    /// separateBy parses zero or more occurrences of a parser with a separator.
+    /// separateBy parses zero or more occurrences of a parser with a separator (discarded).
     let separateBy (p: Parser<'a>) (separator: Parser<'b>) : Parser<'a list> =
         separateBy1 p separator <|> returnP []
+
+    /// separateByOperator1 parses one or more occurences of a parser with a separator (retained).
+    /// mapFirstItem unifies the type of the first item encountered with the rest of the returned list.
+    let separateByOperator1 p op mapFirstItem =
+        let label = sprintf "separateByOperator %s %s" (getLabel p) (getLabel op)
+        p .>>. (many ((op .>>. p)))
+        |>> mapFirstItem
+        |>> List.Cons
+        <?> label
+
+    /// separateByOperator parses one or more occurences of a parser with a separator (retained).
+    /// mapFirstItem unifies the type of the first item encountered with the rest of the returned list.
+    let separateByOperator p op mapFirstItem =
+        separateByOperator1 p op mapFirstItem <|> returnP []
 
     let whitespaceChar =
         let predicate = System.Char.IsWhiteSpace
@@ -448,6 +462,55 @@ module Parser =
     let rec takeString (n: int) (p: Parser<char>) =
         take n p |>> List.toArray |>> System.String
 
+    let chainL1 (p: Parser<'a>) (op: Parser<'a * 'a -> 'a>) =
+        let label =
+            sprintf "chainL1 %s %s" (getLabel p) (getLabel op)
+
+        let mapFirstItem (x, xs) =
+            (Unchecked.defaultof<'a * 'a -> 'a>, x), xs
+
+        let resultFromState list =
+            match list with // is called with (op, y) list in reverse order
+            | ((op, x)::tl) ->
+                let rec calc op x lst =
+                    match lst with
+                    | (op2, y)::tl ->
+                        calc op (op2 (x, y)) tl
+                    | [] ->
+                        x // op is null
+                calc op x tl
+            | [] -> // shouldn't happen
+                failwithf "unexpected error with %s" label
+
+        separateByOperator1 p op mapFirstItem
+        |>> resultFromState
+        <?> label
+
+    let chainR1 (p: Parser<'a>) (op: Parser<'a * 'a -> 'a>) =
+        let label =
+            sprintf "chainR1 %s %s" (getLabel p) (getLabel op)
+
+        let resultFromState list =
+            match list with // is called with (op, y) list in reverse order
+            | ((op, y)::tl) ->
+                let rec calc op y lst =
+                    match lst with
+                    | (op2, x)::tl ->
+                        calc op2 (op (x, y)) tl
+                    | [] ->
+                        y // op is null
+                calc op y tl
+            | [] -> // shouldn't happen
+                failwithf "unexpected error with %s" label
+
+        let mapFirstItem (x, xs) =
+            (Unchecked.defaultof<'a * 'a -> 'a>, x), xs
+
+        separateByOperator1 p op mapFirstItem
+        |>> List.rev
+        |>> resultFromState
+        <?> label
+
     (* Numbers *)
 
     let pDigit =
@@ -507,6 +570,9 @@ module Parser =
     let (>>%) (p: Parser<'a>) (x: 'b) : Parser<'b> =
         p |>> (fun _ -> x)
 
+    let ws = whitespaces
+    let ws1 = whitespaces1
+
     /// Wraps a mutable parser for recusive parsing requirements.
     /// Fixup the parser reference later.
     let inline createParserForwardedToRef<'a> () =
@@ -525,6 +591,42 @@ module Parser =
             { ParserFn = innerFn; Label = "unknown" }
 
         wrapperParser, parserRef
+
+module Operators =
+    open Parser
+
+    type Direction =
+        | Left
+        | Right
+
+    type OperatorPrecedence<'a> = {
+        Operators: Parser<'a>
+        AssociatesTo: Direction
+    }
+
+    let buildOperatorPrecedenceParser (termParser: Parser<'a>) (operators: OperatorPrecedence<'a * 'a -> 'a> list)
+        : Parser<'a> =
+        let label =
+            operators
+            |> List.map (fun op -> op.Operators)
+            |> List.map getLabel
+            |> List.fold (fun s i -> s + " " + i + ";") "Operators:"
+
+        let folder acc operatorPrecedenceLevel =
+            let {
+                Operators = level;
+                AssociatesTo = direction
+                } = operatorPrecedenceLevel
+
+            match direction with
+            | Left ->
+                chainL1 acc level
+            | Right ->
+                chainR1 acc level
+
+        operators
+        |> List.fold folder termParser
+        <?> label
 
 module Ast =
     type Map<'a, 'b> = 'a -> 'b
@@ -562,7 +664,7 @@ module Ast =
             multiply = (*)
             divide = (/)
             modulo = (%)
-            power = (fun x y -> pown x (int y))
+            power = fun x y -> x**y
             paren = id
             negate = negate
         }
@@ -575,7 +677,7 @@ module Ast =
             divide = sprintf "%s / %s"
             add = sprintf "%s + %s"
             modulo = sprintf "%s %% %s"
-            power = sprintf "%s**%s"
+            power = sprintf "%s^%s"
             paren = sprintf "(%s)"
             negate = sprintf "-%s"
         }
@@ -588,7 +690,7 @@ module Ast =
             divide = sprintf "(%s / %s)"
             add = sprintf "(%s + %s)"
             modulo = sprintf "(%s %% %s)"
-            power = sprintf "(%s**%s)"
+            power = sprintf "(%s^%s)"
             paren = sprintf "%s"
             negate = sprintf "(-%s)"
         }
@@ -628,8 +730,6 @@ module Ast =
 
     let describe (expressionTree: Expr) : string =
         foldExpr describeFolder expressionTree
-
-    type Infix = Expr * Expr -> Expr
 
 module Reporting =
     open Parser
@@ -672,81 +772,21 @@ module Reporting =
             printResult result
 
 open Parser
+open Operators
 open Ast
 
-let (pExpr, exprRef) =
+let pOp (c: char) (fn: Expr * Expr -> Expr) =
+    pChar c >>% fn <?> string c
+
+let (pExpr: Parser<Expr>), (exprRef: Parser<Expr> ref) =
     createParserForwardedToRef<Expr> ()
 
-let inline sepBy (p: Parser<Expr>) (op: Parser<Infix>) stateFromFirstElement foldState resultFromState =
-    let ots =
-        optional (op .>>. p)
-    let rec loop v =
-        let calc x =
-            match x with
-            | Some (s, n) ->
-                loop (foldState s v n)
-            | None ->
-                stateFromFirstElement v
-        ots >>= calc
-    p >>= loop |> resultFromState
-
-let chainL1  (p: Parser<Expr>) (op: Parser<Infix>) =
-    sepBy
-        p
-        op
-        returnP
-        (fun f x y -> f (x, y))
-        id
-
-// let chainR1 (p: Parser<Expr>) (op: Parser<Expr * Expr -> Expr>) : Parser<Expr> =
-//     let stateFromFirstElement = (fun (x0: Expr) -> [(Unchecked.defaultof<Expr>, x0)])
-//     let foldState = (fun acc op x -> (op, x)::acc)
-//     let resultFromState =
-//         function // is called with (op, y) list in reverse order
-//         | ((op, y)::tl) ->
-//             let rec calc op y lst =
-//                 match lst with
-//                 | (op2, x)::tl -> calc op2 (op (x, y)) tl
-//                 | [] -> y // op is null
-//             calc op y tl
-//         | [] -> // shouldn't happen
-//                 failwith "chainr1"
-
-//     sepBy p op stateFromFirstElement (fun f x y -> f (x, y)) id //resultFromState
-
-type OperatorPrecedence<'a> = {
-    CombinedOperators: Parser<'a>
-}
-
-let pOperators (operatesOn: Parser<Expr>) (operatorLevels: OperatorPrecedence<Infix> list)
-    : Parser<Expr> =
-    let label =
-        operatorLevels
-        |> List.map (fun op -> op.CombinedOperators)
-        |> List.map getLabel
-        |> List.fold (fun s i -> s + " " + i + ";") "Operators:"
-
-    let rec loop (acc: Parser<Expr>) (operatorLevels: OperatorPrecedence<Infix> list) =
-        match operatorLevels with
-        | [] ->
-            acc
-        | ({ CombinedOperators = level})::remainingLevels ->
-            loop (chainL1 acc level) remainingLevels
-
-    loop operatesOn operatorLevels
-    <?> label
-
 let pConstant: Parser<Expr> =
-    pFloat <|> (pInt |>> float) .>> whitespaces
+    pFloat <|> (pInt |>> float)
     |>> Constant <?> "constant"
 
-let pBracketedExpression: Parser<Expr> =
-    let left =
-        pChar '(' .>> whitespaces
-    let right =
-        pChar ')' .>> whitespaces
-
-    (betweenExclusive left pExpr right) .>> whitespaces
+let pBrackets: Parser<Expr> =
+    betweenExclusive (pChar '(') pExpr (pChar ')')
     |>> Parens <?> "brackets"
 
 let pNegation: Parser<Expr> =
@@ -756,43 +796,43 @@ let pNegation: Parser<Expr> =
             expr
         | (_, expr) ->
             Negate expr
-    <?> "negation"
+    <?> "negate"
 
-let pPower =
-    pString "**" >>% Power .>> whitespaces <?> "**"
-let pMulOp =
-    pChar '*' >>% Multiply .>> whitespaces <?> "*"
-let pDivOp =
-    pChar '/' >>% Divide .>> whitespaces <?> "/"
-let pModOp =
-    pChar '%' >>% Modulo .>> whitespaces <?> "%"
-let pAddOp =
-    pChar '+' >>% Add .>> whitespaces <?> "+"
-let pSubOp =
-    pChar '-' >>% Subtract .>> whitespaces <?> "-"
+let pPow = pOp '^' Power
+let pMul = pOp '*' Multiply
+let pDiv = pOp '/' Divide
+let pMod = pOp '%' Modulo
+let pAdd = pOp '+' Add
+let pSub = pOp '-' Subtract
 
-let pTerm: Parser<Expr> =
-    pConstant <|> pNegation <|> pBracketedExpression
-
-let operatorsTable: OperatorPrecedence<Infix> list = [
-    { CombinedOperators = pPower }
-    { CombinedOperators = pMulOp <|> pDivOp <|> pModOp }
-    { CombinedOperators = pAddOp <|> pSubOp }
+let operatorsTable = [
+    { Operators = pPow; AssociatesTo = Right }
+    { Operators = pMul <|> pDiv <|> pMod; AssociatesTo = Left }
+    { Operators = pAdd <|> pSub; AssociatesTo = Left }
 ]
 
-let pExprImplementation: Parser<Expr> =
-    pOperators pTerm operatorsTable
+let pTerm =
+    pConstant
 
-exprRef.Value <- pExprImplementation
+let pOperand =
+    ws >>. (pTerm <|> pNegation <|> pBrackets) .>> ws
+
+let pOperators =
+    buildOperatorPrecedenceParser pOperand operatorsTable
+
+let pExprImplementation =
+    pOperators
+
+do exprRef.Value <- pExprImplementation
 
 let expressions =
     [
-        "1+2+3+4+5"
-        "2**3**4"
+        "1 + 2 + 3 + 4 + 5"
+        "1.1^1.2^1.3^1.4"
         "-1 + -2 + ---4"
         "100 * 3 + 10 % 2"
-        "100 * 3 + 10"
-        "(100 * 3) + 10.5"
+        "100 * 3 - 1 + 10^3"
+        "  ( 100 * 3 ) + 10.5 "
     ]
 
 open Reporting
