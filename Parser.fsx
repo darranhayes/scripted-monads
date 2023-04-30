@@ -141,12 +141,6 @@ module Parser =
         |> List.toArray
         |> System.String
 
-    let charListToInt list =
-        list
-        |> List.toArray
-        |> System.String
-        |> int
-
     let rec parseZeroOrMore (p: Parser<'a>) (input: InputState) : list<'a> * InputState =
         match runOnInput p input with
         | Failure _ ->
@@ -469,8 +463,8 @@ module Parser =
         let mapFirstItem (x, xs) =
             (Unchecked.defaultof<'a * 'a -> 'a>, x), xs
 
-        let resultFromState list =
-            match list with // is called with (op, y) list in reverse order
+        let composeParsers list =
+            match list with // is called with (op, y) list in order
             | ((op, x)::tl) ->
                 let rec calc op x lst =
                     match lst with
@@ -479,18 +473,21 @@ module Parser =
                     | [] ->
                         x // op is null
                 calc op x tl
-            | [] -> // shouldn't happen
+            | [] ->
                 failwithf "unexpected error with %s" label
 
         separateByOperator1 p op mapFirstItem
-        |>> resultFromState
+        |>> composeParsers
         <?> label
 
     let chainR1 (p: Parser<'a>) (op: Parser<'a * 'a -> 'a>) =
         let label =
             sprintf "chainR1 %s %s" (getLabel p) (getLabel op)
 
-        let resultFromState list =
+        let mapFirstItem (x, xs) =
+            (Unchecked.defaultof<'a * 'a -> 'a>, x), xs
+
+        let composeParsers list =
             match list with // is called with (op, y) list in reverse order
             | ((op, y)::tl) ->
                 let rec calc op y lst =
@@ -500,15 +497,12 @@ module Parser =
                     | [] ->
                         y // op is null
                 calc op y tl
-            | [] -> // shouldn't happen
+            | [] ->
                 failwithf "unexpected error with %s" label
-
-        let mapFirstItem (x, xs) =
-            (Unchecked.defaultof<'a * 'a -> 'a>, x), xs
 
         separateByOperator1 p op mapFirstItem
         |>> List.rev
-        |>> resultFromState
+        |>> composeParsers
         <?> label
 
     (* Numbers *)
@@ -652,7 +646,7 @@ module Ast =
         divide: Monoid<'b>
         modulo: Monoid<'b>
         power: Monoid<'b>
-        equals: 'b -> 'b -> 'b
+        equals: Monoid<'b>
         paren: Map<'b, 'b>
         negate: Map<'b, 'b>
     }
@@ -661,12 +655,12 @@ module Ast =
         let negate x = -x
         {
             value = float
-            add = (+)
-            subract = (-)
-            multiply = (*)
-            divide = (/)
-            modulo = (%)
-            power = fun x y -> x**y
+            add = ( + )
+            subract = ( - )
+            multiply = ( * )
+            divide = ( / )
+            modulo = ( % )
+            power = ( ** )
             equals = fun x y -> if x = y then 1.0 else 0.0
             paren = id
             negate = negate
@@ -787,6 +781,21 @@ open Ast
 let pOp (c: char) (fn: Expr * Expr -> Expr) =
     pChar c >>% fn <?> string c
 
+let pPow = pOp '^' Power
+let pMul = pOp '*' Multiply
+let pDiv = pOp '/' Divide
+let pMod = pOp '%' Modulo
+let pAdd = pOp '+' Add
+let pSub = pOp '-' Subtract
+let pEquals = pOp '=' Equals
+
+let operatorsTable = [
+    { Operators = pPow; AssociatesTo = Right }
+    { Operators = pMul <|> pDiv <|> pMod; AssociatesTo = Left }
+    { Operators = pAdd <|> pSub; AssociatesTo = Left }
+    { Operators = pEquals; AssociatesTo = Left }
+]
+
 let (pExpr: Parser<Expr>), (exprRef: Parser<Expr> ref) =
     createParserForwardedToRef<Expr> ()
 
@@ -798,46 +807,31 @@ let pBrackets: Parser<Expr> =
     betweenExclusive (pChar '(') pExpr (pChar ')')
     |>> Parens <?> "brackets"
 
-let pNegation: Parser<Expr> =
-    (pManyChars1 (pChar '-')) .>>. pExpr
-    |>> function
-        | (cs, expr) when cs.Length % 2 = 0 ->
-            expr
-        | (_, expr) ->
-            Negate expr
-    <?> "negate"
-
-let pPow = pOp '^' Power
-let pMul = pOp '*' Multiply
-let pDiv = pOp '/' Divide
-let pMod = pOp '%' Modulo
-let pAdd = pOp '+' Add
-let pSub = pOp '-' Subtract
-
-let operatorsTable = [
-    { Operators = pPow; AssociatesTo = Right }
-    { Operators = pMul <|> pDiv <|> pMod; AssociatesTo = Left }
-    { Operators = pAdd <|> pSub; AssociatesTo = Left }
-]
-
 let pTerm =
     pConstant
+
+let pNegation: Parser<Expr> =
+    let negs =
+        pManyChars1 (pChar '-')
+
+    let expression =
+        pTerm <|> pBrackets
+
+    let processResult (ns: string, expr) =
+        if ns.Length % 2 = 0 then
+            expr
+        else
+            Negate expr
+
+    negs .>>. expression
+    |>> processResult
+    <?> "negate"
 
 let pOperand =
     ws >>. (pTerm <|> pNegation <|> pBrackets) .>> ws
 
-let pExpressions =
+do exprRef.Value <-
     buildOperatorPrecedenceParser pOperand operatorsTable
-
-let pEquality =
-    let eq = ws >>. (pChar '=') .>> ws
-    pExpr .>>. eq .>>. pExpr
-    |>> fun ((x, _), y) -> Equals (x, y)
-
-do exprRef.Value <- pExpressions
-
-let pStatement =
-    pEquality <|> pExpressions
 
 let expressions =
     [
@@ -854,16 +848,16 @@ let expressions =
 open Reporting
 
 printfn "\nArithmetic evaluation"
-expressions |> List.iter (evalAndPrint pStatement evaluate)
+expressions |> List.iter (evalAndPrint pExpr evaluate)
 
 printfn "\nMin term evaluation"
-expressions |> List.iter (evalAndPrint pStatement (foldExpr minFolder))
+expressions |> List.iter (evalAndPrint pExpr (foldExpr minFolder))
 
 printfn "\nMax term evaluation"
-expressions |> List.iter (evalAndPrint pStatement (foldExpr maxFolder))
+expressions |> List.iter (evalAndPrint pExpr (foldExpr maxFolder))
 
 printfn "\nOrder of evaluation"
-expressions |> List.iter (evalAndPrint pStatement (foldExpr describeEvaluationOrder))
+expressions |> List.iter (evalAndPrint pExpr (foldExpr describeEvaluationOrder))
 
 printfn "\nRaw"
-expressions |> List.iter (evalAndPrint pStatement id)
+expressions |> List.iter (evalAndPrint pExpr id)
