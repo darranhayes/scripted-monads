@@ -202,6 +202,46 @@ module FList =
                     loop xs accLeft (Cons(x, accRight))
         loop list Empty Empty
 
+    let itemAt (index: int) (list: FList<'a>) : 'a =
+        let rec loop i l =
+            match l with
+            | Empty -> failwith "index must be less than the length of the list"
+            | Cons(x, xs) ->
+                if i < index then
+                    loop (i + 1) xs
+                else
+                    x
+        loop 0 list
+
+    let insertAt (index: int) (item: 'a) (list: FList<'a>) : FList<'a> =
+        let rec loop i l =
+            match l with
+            | Empty ->
+                if i = index then
+                    Cons(item, Empty)
+                else
+                    failwith "index must be less than the length of the list"
+            | Cons(x, xs) ->
+                if i = index then
+                    Cons(item, Cons(x, xs))
+                else
+                    Cons(x, loop (i + 1) xs)
+        loop 0 list
+
+    let binarySearch (item: 'a) (list: FList<'a>) : int =
+        let rec findBetween low high =
+            if low > high then
+                ~~~low
+            else
+                let mid = (low + high) / 2
+                match compare item (itemAt mid list) with
+                | 0 -> mid
+                | x when x < 0 -> findBetween low (mid - 1)
+                | x when x > 0 -> findBetween (mid + 1) high
+                | _ -> failwith "unexpected error"
+
+        findBetween 0 (length list)
+
     let private sort' (predicate: 'a -> 'a -> bool) (list: FList<'a>) : FList<'a> =
         let rec quicksort list =
             match list with
@@ -394,3 +434,8 @@ let xonacci takeN initialState =
 
 0 ^+ 1 ^+ Empty |> xonacci 30 |> FList.toString |> printfn "%s"
 0 ^+ 0 ^+ 0 ^+ 0 ^+ 1 ^+ Empty |> xonacci 30 |> FList.toString |> printfn "%s"
+
+let list = 0 ^+ 0 ^+ 0 ^+ 0 ^+ 1 ^+ Empty |> xonacci 30
+
+let index = FList.binarySearch 62 list
+FList.insertAt (~~~index) 62 list
