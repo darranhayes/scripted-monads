@@ -215,32 +215,45 @@ module rec FList =
 
     let insertAt (index: int) (item: 'a) (list: FList<'a>) : FList<'a> =
         let rec loop i l =
-            match l with
-            | Empty ->
-                if i = index then
-                    Cons(item, Empty)
-                else
-                    failwith "index must be less than the length of the list"
-            | Cons(x, xs) ->
-                if i = index then
-                    Cons(item, Cons(x, xs))
-                else
-                    Cons(x, loop (i + 1) xs)
-        loop 0 list
+            cont {
+                match l with
+                | Empty ->
+                    if i = index then
+                        return Cons(item, Empty)
+                    else
+                        do failwith "index must be less than the length of the list"
+                        return Empty
+                | Cons(x, xs) ->
+                    if i = index then
+                        return Cons(item, Cons(x, xs))
+                    else
+                        let! zs = loop (i + 1) xs
+                        return Cons(x, zs)
+            }
+        loop 0 list |> Cont.eval
 
     let binarySearch (item: 'a) (list: FList<'a>) : int =
-        let rec findBetween low high =
+        let rec findBetween low high zipperList =
             if low > high then
                 ~~~low
             else
                 let mid = (low + high) / 2
-                match compare item (itemAt mid list) with
-                | 0 -> mid
-                | x when x < 0 -> findBetween low (mid - 1)
-                | x when x > 0 -> findBetween (mid + 1) high
-                | _ -> failwith "unexpected error"
 
-        findBetween 0 (length list)
+                if mid >= Zipper.length zipperList then
+                    ~~~mid
+                else
+                    let z =
+                        zipperList |> Zipper.moveTo mid
+                    let itemAt =
+                        z |> Zipper.item |> Option.get
+
+                    match compare item itemAt with
+                    | 0 -> mid
+                    | x when x < 0 -> findBetween low (mid - 1) z
+                    | x when x > 0 -> findBetween (mid + 1) high z
+                    | _ -> failwith "unexpected error"
+
+        findBetween 0 (length list) (Zipper.fromList list)
 
     let private sort' (predicate: 'a -> 'a -> bool) (list: FList<'a>) : FList<'a> =
         let rec quicksort list =
@@ -251,7 +264,7 @@ module rec FList =
                 let left, right =
                     xs
                     |> partition (predicate x)
-                quicksort left @ ret x @ quicksort right
+                quicksort left @ (Cons(x, quicksort right))
         quicksort list
 
     let sort (list: FList<'a>) : FList<'a> =
@@ -391,105 +404,106 @@ let (^+) x xs = FList.cons x xs
 
 let flist = FList.Builder()
 
-// flist {
-//     let! x = Cons('a', Cons('b', Empty))
-//     let! y = 1 ^+ 2 ^+ Empty
-//     let! z = [| '*'; '_'; '/' |] |> FList.ofSeq
-//     return (x, y, z)
-// }
+flist {
+    let! x = Cons('a', Cons('b', Empty))
+    let! y = 1 ^+ 2 ^+ Empty
+    let! z = [| '*'; '_'; '/' |] |> FList.ofSeq
+    return (x, y, z)
+}
 
-// flist {
-//     for i in Cons(1, Cons(2, Cons(3, Empty))) do
-//         yield i * 10
-// }
+flist {
+    for i in Cons(1, Cons(2, Cons(3, Empty))) do
+        yield i * 10
+}
 
-// flist {
-//     for i in 0..2..10 do
-//         yield i * 10
-// }
+flist {
+    for i in 0..2..10 do
+        yield i * 10
+}
 
-// flist {
-//     for i in 1..3 do
-//         for j in 10..10..20 do
-//             yield i * j
-// }
+flist {
+    for i in 1..3 do
+        for j in 10..10..20 do
+            yield i * j
+}
 
-// flist {
-//     for i in 0..5..10 do
-//         yield! i + 5 ^+ i + 6 ^+ Empty
-// } |> FList.toString
+flist {
+    for i in 0..5..10 do
+        yield! i + 5 ^+ i + 6 ^+ Empty
+} |> FList.toString
 
-// let lista = Cons(1, Cons(2, Cons(3, Empty)))
-// let listb = lista |> FList.map (fun x -> x + 10)
-// let listc = FList.concat lista listb
+let lista = Cons(1, Cons(2, Cons(3, Empty)))
+let listb = lista |> FList.map (fun x -> x + 10)
+let listc = FList.concat lista listb
 
-// listc |> FList.toSeq
+listc |> FList.toSeq
 
-// listc |> FList.length
+listc |> FList.length
 
-// let listd = 100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
+let listd = 100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
 
-// let listSum =
-//     100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
-//     |> FList.fold (+) 0
+let listSum =
+    100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
+    |> FList.fold (+) 0
 
 
-// let ll = lista ^+ listb ^+ listd ^+ Empty
-// ll |> FList.flatten |> FList.reverse |> (FList.map (fun x -> x * 3)) |> FList.toString
+let ll = lista ^+ listb ^+ listd ^+ Empty
+ll |> FList.flatten |> FList.reverse |> (FList.map (fun x -> x * 3)) |> FList.toString
 
-// let random =
-//     let r = System.Random()
-//     fun () -> r.Next()
+let random =
+    let r = System.Random()
+    fun () -> r.Next()
 
-// let la = seq { for i in 1..1000 -> random () } |> FList.ofSeq
+let la = seq { for i in 1..1000 -> random () } |> FList.ofSeq
+la |> FList.sort
 
-// let lb = la |> FList.map (fun i -> i / 2)
+let lb = la |> FList.map (fun i -> i / 2)
 
-// let lc = la |> FList.map (fun i -> i / 3)
+let lc = la |> FList.map (fun i -> i / 3)
 
-// let ld =  FList.concat lb lc
+let ld =  FList.concat lb lc
 
-// ld |> FList.min
-// ld |> FList.max
-// ld |> FList.length
-// ld |> FList.sort |> FList.toSeq
+ld |> FList.min
+ld |> FList.max
+ld |> FList.length
+ld |> FList.sort |> FList.toSeq
 
-// seq { 20..-1..1 } |> FList.ofSeq |> FList.sort
-// seq { 20..-1..1 } |> FList.ofSeq |> FList.sortDescending
+seq { 20..-1..1 } |> FList.ofSeq |> FList.sort
+seq { 20..-1..1 } |> FList.ofSeq |> FList.sortDescending
 
-// let transactions =
-//     seq {
-//         -100.00
-//         450.34
-//         -62.34
-//         -127.00
-//         -13.50
-//         -12.92
-//     }
-//     |> FList.ofSeq
+let transactions =
+    seq {
+        -100.00
+        450.34
+        -62.34
+        -127.00
+        -13.50
+        -12.92
+    }
+    |> FList.ofSeq
 
-// FList.fold (+) 1122.73 transactions
-// FList.scan (+) 1122.73 transactions |> FList.toSeq |> Seq.toArray
+FList.fold (+) 1122.73 transactions
+FList.scan (+) 1122.73 transactions |> FList.toSeq |> Seq.toArray
 
-// type Charge =
-//     | In of int
-//     | Out of int
+type Charge =
+    | In of int
+    | Out of int
 
-// let inputs =
-//     [ In 1; Out 2; In 3 ]
-//     |> FList.ofSeq
+let inputs =
+    [ In 1; Out 2; In 3 ]
+    |> FList.ofSeq
 
-// FList.scanBack (fun charge acc ->
-//     match charge with
-//     | In i -> acc + i
-//     | Out o -> acc - o) inputs 0
+FList.scanBack (fun charge acc ->
+    match charge with
+    | In i -> acc + i
+    | Out o -> acc - o) inputs 0
 
-// FList.scanBack (+) (seq { 1; 2;3 } |> FList.ofSeq) 0
+FList.scanBack (+) (seq { 1; 2;3 } |> FList.ofSeq) 0
 
-// seq { 1 .. 1000 }
-// |> FList.ofSeq
-// |> FList.trySkip 500
-// |> Option.bind (FList.tryTake 5)
+seq { 1 .. 1000 }
+|> FList.ofSeq
+|> FList.trySkip 500
+|> Option.bind (FList.tryTake 5)
 
 let xonacci takeN initialState =
     let generator (list, total) =
@@ -508,10 +522,13 @@ let xonacci takeN initialState =
 0 ^+ 1 ^+ Empty |> xonacci 30 |> FList.toString |> printfn "%s"
 0 ^+ 0 ^+ 0 ^+ 0 ^+ 1 ^+ Empty |> xonacci 30 |> FList.toString |> printfn "%s"
 
-let list = 0 ^+ 0 ^+ 0 ^+ 0 ^+ 1 ^+ Empty |> xonacci 30
+let list = 0 ^+ 1 ^+ Empty |> xonacci 30
 
-let index = FList.binarySearch 62 list
-FList.insertAt (~~~index) 62 list
+let index1 = FList.binarySearch -1 list // not found
+FList.insertAt (~~~index1) -1 list |> FList.tryTake 5
 
-0 ^+ 1 ^+ Empty |> xonacci 30 |> FList.toSeq |> Seq.toArray
+let index2 = FList.binarySearch 62 list // not found
+FList.insertAt (~~~index2) 62 list |> FList.trySkip 8 |> Option.get |> FList.tryTake 5
 
+let index3 = FList.binarySearch 1346269 list // not found
+FList.insertAt (~~~index3) 1346269 list |> FList.trySkip 28
