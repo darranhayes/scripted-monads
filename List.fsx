@@ -6,7 +6,7 @@ type FList<'a> =
     | Cons of head: 'a * tail: FList<'a>
 
 [<RequireQualifiedAccessAttribute>]
-module FList =
+module rec FList =
     let ret x =
         Cons(x, Empty)
 
@@ -101,10 +101,10 @@ module FList =
             reduce f list |> Some
 
     let min (list: FList<'a>) : 'a =
-        reduce min list
+        reduce Operators.min list
 
     let max (list: FList<'a>) : 'a =
-        reduce max list
+        reduce Operators.max list
 
     let scan (f: 'State -> 'a -> 'State) (initialState: 'State) (list: FList<'a>) : FList<'State> =
         let rec loop state list =
@@ -313,110 +313,183 @@ module FList =
             let list = ofSeq m
             this.Bind(list, fn)
 
+    /// Zipper is a faster performing wapper structure that enables imperative left/right
+    /// movements along a list and to make in place modifications without compromising
+    /// on immutability and without having to traverse the list from head every time
+    type Zipper<'a> = {
+        Left: FList<'a>
+        LeftLength: int
+        Right: FList<'a>
+        RightLength: int
+    }
+
+    module Zipper =
+        let zipper (l: FList<'a>) (r: FList<'a>) =
+            { Left = l; LeftLength = FList.length l; Right = r; RightLength = FList.length r }
+
+        let fromList list =
+            zipper FList.Empty list
+
+        let left (z: Zipper<'a>) : Zipper<'a> option =
+            // take first item from left, cons onto right
+            match z with
+            | { Left = Empty } ->
+                None
+            | { Left = Cons(x, xs); LeftLength = ll; Right = right; RightLength = rl } ->
+                Some { Left = xs; LeftLength = ll - 1; Right = Cons(x, right); RightLength = rl + 1 }
+
+        let right (z: Zipper<'a>) : Zipper<'a> option =
+            // take first item from right, cons onto left
+            match z with
+            | { Right = Empty } ->
+                None
+            | { Left = left; LeftLength = ll; Right = Cons(x, xs); RightLength = rl } ->
+                Some { Left = Cons(x, left); LeftLength = ll + 1; Right = xs; RightLength = rl - 1 }
+
+        let item (z: Zipper<'a>) : 'a option =
+            match z with
+            | { Right = Empty } ->
+                None
+            | { Right = Cons(x, _) } ->
+                Some x
+
+        let setItem (value: 'a) (z: Zipper<'a>) : Zipper<'a> =
+            match z with
+            | { Right = Empty } ->
+                { z with Right = Cons(value, Empty); RightLength = z.RightLength + 1 }
+            | { Right = Cons(_, xs) } ->
+                { z with Right = Cons(value, xs) }
+
+        let length (z: Zipper<'a>) : int =
+            z.LeftLength + z.RightLength
+
+        let moveTo (n: int) (z: Zipper<'a>) : Zipper<'a> =
+            if n < 0 || n >= length z then
+                failwithf "Position must be greater than zero and less than length of the list. n = %i" n
+            else
+                let currentPosition = z.LeftLength
+                let moveFn, times =
+                    if n < currentPosition then
+                        left, currentPosition - n
+                    else
+                        right, n - currentPosition
+
+                let rec loop i zz =
+                    if i = times then
+                        zz
+                    else
+                        loop (i + 1) (moveFn zz |> Option.get)
+
+                loop 0 z
+
+        let toList (z: Zipper<'a>) : FList<'a> =
+            let zz = z |> moveTo 0
+            zz.Right
+
 let (@) = FList.concat
 let (^+) x xs = FList.cons x xs
 
 let flist = FList.Builder()
 
-flist {
-    let! x = Cons('a', Cons('b', Empty))
-    let! y = 1 ^+ 2 ^+ Empty
-    let! z = [| '*'; '_'; '/' |] |> FList.ofSeq
-    return (x, y, z)
-}
+// flist {
+//     let! x = Cons('a', Cons('b', Empty))
+//     let! y = 1 ^+ 2 ^+ Empty
+//     let! z = [| '*'; '_'; '/' |] |> FList.ofSeq
+//     return (x, y, z)
+// }
 
-flist {
-    for i in Cons(1, Cons(2, Cons(3, Empty))) do
-        yield i * 10
-}
+// flist {
+//     for i in Cons(1, Cons(2, Cons(3, Empty))) do
+//         yield i * 10
+// }
 
-flist {
-    for i in 0..2..10 do
-        yield i * 10
-}
+// flist {
+//     for i in 0..2..10 do
+//         yield i * 10
+// }
 
-flist {
-    for i in 1..3 do
-        for j in 10..10..20 do
-            yield i * j
-}
+// flist {
+//     for i in 1..3 do
+//         for j in 10..10..20 do
+//             yield i * j
+// }
 
-flist {
-    for i in 0..5..10 do
-        yield! i + 5 ^+ i + 6 ^+ Empty
-} |> FList.toString
+// flist {
+//     for i in 0..5..10 do
+//         yield! i + 5 ^+ i + 6 ^+ Empty
+// } |> FList.toString
 
-let lista = Cons(1, Cons(2, Cons(3, Empty)))
-let listb = lista |> FList.map (fun x -> x + 10)
-let listc = FList.concat lista listb
+// let lista = Cons(1, Cons(2, Cons(3, Empty)))
+// let listb = lista |> FList.map (fun x -> x + 10)
+// let listc = FList.concat lista listb
 
-listc |> FList.toSeq
+// listc |> FList.toSeq
 
-listc |> FList.length
+// listc |> FList.length
 
-let listd = 100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
+// let listd = 100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
 
-let listSum =
-    100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
-    |> FList.fold (+) 0
+// let listSum =
+//     100 ^+ 200 ^+ 300 ^+ 400 ^+ Empty
+//     |> FList.fold (+) 0
 
 
-let ll = lista ^+ listb ^+ listd ^+ Empty
-ll |> FList.flatten |> FList.reverse |> (FList.map (fun x -> x * 3)) |> FList.toString
+// let ll = lista ^+ listb ^+ listd ^+ Empty
+// ll |> FList.flatten |> FList.reverse |> (FList.map (fun x -> x * 3)) |> FList.toString
 
-let random =
-    let r = System.Random()
-    fun () -> r.Next()
+// let random =
+//     let r = System.Random()
+//     fun () -> r.Next()
 
-let la = seq { for i in 1..1000 -> random () } |> FList.ofSeq
+// let la = seq { for i in 1..1000 -> random () } |> FList.ofSeq
 
-let lb = la |> FList.map (fun i -> i / 2)
+// let lb = la |> FList.map (fun i -> i / 2)
 
-let lc = la |> FList.map (fun i -> i / 3)
+// let lc = la |> FList.map (fun i -> i / 3)
 
-let ld =  FList.concat lb lc
+// let ld =  FList.concat lb lc
 
-ld |> FList.min
-ld |> FList.max
-ld |> FList.length
-ld |> FList.sort |> FList.toSeq
+// ld |> FList.min
+// ld |> FList.max
+// ld |> FList.length
+// ld |> FList.sort |> FList.toSeq
 
-seq { 20..-1..1 } |> FList.ofSeq |> FList.sort
-seq { 20..-1..1 } |> FList.ofSeq |> FList.sortDescending
+// seq { 20..-1..1 } |> FList.ofSeq |> FList.sort
+// seq { 20..-1..1 } |> FList.ofSeq |> FList.sortDescending
 
-let transactions =
-    seq {
-        -100.00
-        450.34
-        -62.34
-        -127.00
-        -13.50
-        -12.92
-    }
-    |> FList.ofSeq
+// let transactions =
+//     seq {
+//         -100.00
+//         450.34
+//         -62.34
+//         -127.00
+//         -13.50
+//         -12.92
+//     }
+//     |> FList.ofSeq
 
-FList.fold (+) 1122.73 transactions
-FList.scan (+) 1122.73 transactions |> FList.toSeq |> Seq.toArray
+// FList.fold (+) 1122.73 transactions
+// FList.scan (+) 1122.73 transactions |> FList.toSeq |> Seq.toArray
 
-type Charge =
-    | In of int
-    | Out of int
+// type Charge =
+//     | In of int
+//     | Out of int
 
-let inputs =
-    [ In 1; Out 2; In 3 ]
-    |> FList.ofSeq
+// let inputs =
+//     [ In 1; Out 2; In 3 ]
+//     |> FList.ofSeq
 
-FList.scanBack (fun charge acc ->
-    match charge with
-    | In i -> acc + i
-    | Out o -> acc - o) inputs 0
+// FList.scanBack (fun charge acc ->
+//     match charge with
+//     | In i -> acc + i
+//     | Out o -> acc - o) inputs 0
 
-FList.scanBack (+) (seq { 1; 2;3 } |> FList.ofSeq) 0
+// FList.scanBack (+) (seq { 1; 2;3 } |> FList.ofSeq) 0
 
-seq { 1 .. 1000 }
-|> FList.ofSeq
-|> FList.trySkip 500
-|> Option.bind (FList.tryTake 5)
+// seq { 1 .. 1000 }
+// |> FList.ofSeq
+// |> FList.trySkip 500
+// |> Option.bind (FList.tryTake 5)
 
 let xonacci takeN initialState =
     let generator (list, total) =
@@ -439,3 +512,6 @@ let list = 0 ^+ 0 ^+ 0 ^+ 0 ^+ 1 ^+ Empty |> xonacci 30
 
 let index = FList.binarySearch 62 list
 FList.insertAt (~~~index) 62 list
+
+0 ^+ 1 ^+ Empty |> xonacci 30 |> FList.toSeq |> Seq.toArray
+
