@@ -2,63 +2,57 @@
 open System
 
 module Blogging =
-    module Domain =
-        type BlogId = BlogId of Guid
-        type Title = Title of string
+    type BlogId = BlogId of Guid
+    type Title = Title of string
 
-        type AuthorId = AuthorId of Guid
-        type Name = Name of string
+    type AuthorId = AuthorId of Guid
+    type Name = Name of string
 
-        type PostId = PostId of Guid
-        type Content = Content of string
+    type PostId = PostId of Guid
+    type Content = Content of string
 
-        type Blog = { Id: BlogId; Title: Title }
+    type Blog = { Id: BlogId; Title: Title }
 
-        type Author = { Id: AuthorId; Name: Name }
+    type Author = { Id: AuthorId; Name: Name }
 
-        type Post =
-            { Id: PostId
-              BlogId: BlogId
-              AuthorId: AuthorId
-              Title: Title
-              Content: Content }
+    type Post = {
+        Id: PostId
+        BlogId: BlogId
+        AuthorId: AuthorId
+        Title: Title
+        Content: Content
+    }
 
-    module Logic =
-        open Domain
+    let newBlog x = {
+        Id = BlogId(Guid.NewGuid())
+        Title = x }
 
-        let newBlog x =
-            { Id = BlogId(Guid.NewGuid())
-              Title = x }
+    let createAuthor x = {
+        Id = AuthorId(Guid.NewGuid())
+        Name = x }
 
-        let createAuthor x =
-            { Id = AuthorId(Guid.NewGuid())
-              Name = x }
+    let newPost blogId authorId postTitle = {
+        Id = PostId(Guid.NewGuid())
+        Title = postTitle
+        BlogId = blogId
+        AuthorId = authorId
+        Content = Content "" }
 
-        let newPost blogId authorId postTitle =
-            { Id = PostId(Guid.NewGuid())
-              Title = postTitle
-              BlogId = blogId
-              AuthorId = authorId
-              Content = Content "" }
+module BloggingDSL =
+    open Blogging
 
-module BlogTesting =
-    module Implementation =
-        open Blogging.Domain
+    type BlogInstruction<'a> =
+        | NewBlog of (Title * (Blog -> BlogInstruction<'a>))
+        | CreateAuthor of (Name * (Author -> BlogInstruction<'a>))
+        | NewBlogPost of ((BlogId * AuthorId * Title) * (Post -> BlogInstruction<'a>))
+        | Stop of 'a
 
-        type BlogInstruction<'a> =
-            | NewBlog of (Title * (Blog -> BlogInstruction<'a>))
-            | CreateAuthor of (Name * (Author -> BlogInstruction<'a>))
-            | NewBlogPost of ((BlogId * AuthorId * Title) * (Post -> BlogInstruction<'a>))
-            | Stop of 'a
-
-        let rec bind f =
-            function
-            | NewBlog (args, next) -> NewBlog(args, next >> bind f)
-            | CreateAuthor (args, next) -> CreateAuthor(args, next >> bind f)
-            | NewBlogPost (args, next) -> NewBlogPost(args, next >> bind f)
-            | Stop x -> f x
-
-    open Implementation
+    let rec bind f =
+        function
+        | NewBlog (args, next) -> NewBlog(args, next >> bind f)
+        | CreateAuthor (args, next) -> CreateAuthor(args, next >> bind f)
+        | NewBlogPost (args, next) -> NewBlogPost(args, next >> bind f)
+        | Stop x -> f x
 
     type BlogBuilder() =
         member this.Bind(x, f) = bind f x
@@ -66,58 +60,92 @@ module BlogTesting =
         member this.ReturnFrom x = x
         member this.Zero() = Stop()
 
-    module Commands =
-        let newBlog blogTitle = NewBlog(blogTitle, Stop)
-        let createAuthor name = CreateAuthor(name, Stop)
-
-        let newBlogPost blogId authorId title =
-            NewBlogPost((blogId, authorId, title), Stop)
+module Interpreters =
+    open Blogging
+    open BloggingDSL
 
     [<RequireQualifiedAccess>]
-    module FastTests =
-        open Blogging.Logic
-
+    module Pure =
         let rec interpreter =
             function
-            | Stop x -> x
-            | NewBlog (name, next) -> newBlog name |> (next >> interpreter)
-            | CreateAuthor (name, next) -> createAuthor name |> (next >> interpreter)
+            | Stop x ->
+                x
+            | NewBlog (name, next) ->
+                newBlog name |> (next >> interpreter)
+            | CreateAuthor (name, next) ->
+                createAuthor name |> (next >> interpreter)
             | NewBlogPost ((blogId, authorId, title), next) ->
                 newPost blogId authorId title
                 |> (next >> interpreter)
 
     [<RequireQualifiedAccess>]
-    module AsyncTests =
-        open Blogging.Logic
-
+    module Async =
         let rec interpreter =
             function
-            | Stop x -> async { return x }
-            | NewBlog (name, next) -> async { return! newBlog name |> (next >> interpreter) }
-            | CreateAuthor (name, next) -> async { return! createAuthor name |> (next >> interpreter) }
+            | Stop x ->
+                async { return x }
+            | NewBlog (name, next) ->
+                async { return! newBlog name |> (next >> interpreter) }
+            | CreateAuthor (name, next) ->
+                async { return! createAuthor name |> (next >> interpreter) }
             | NewBlogPost ((blogId, authorId, title), next) ->
                 async {
                     return! newPost blogId authorId title
                             |> (next >> interpreter)
                 }
 
-let blogTest = BlogTesting.BlogBuilder()
+    [<RequireQualifiedAccess>]
+    module PrettyPrinter =
+        let print instruction args obj =
+            printfn "%s (%A) = \n%O" instruction args obj
+            obj
 
-open Blogging.Domain
-open BlogTesting.Commands
+        let rec interpreter p =
+            match p with
+            | Stop value ->
+                value
+            | NewBlog (name, next) ->
+                newBlog name
+                |> print (nameof NewBlog) [| name |]
+                |> (next >> interpreter)
+            | CreateAuthor (name, next) ->
+                createAuthor name
+                |> print (nameof CreateAuthor) [| name |]
+                |> (next >> interpreter)
+            | NewBlogPost ((blogId, authorId, title), next) ->
+                let args : obj[] = [| blogId; authorId; title |]
 
-let simpleProgram =
-    blogTest {
+                newPost blogId authorId title
+                |> print (nameof NewBlogPost) args
+                |> (next >> interpreter)
+
+let blogging = BloggingDSL.BlogBuilder()
+
+module Commands =
+    open BloggingDSL
+
+    let newBlog blogTitle =
+        NewBlog(blogTitle, Stop)
+
+    let createAuthor name =
+        CreateAuthor(name, Stop)
+
+    let newBlogPost blogId authorId title =
+        NewBlogPost((blogId, authorId, title), Stop)
+
+open Blogging
+open Commands
+
+let createPostProgram =
+    blogging {
         let! newAuthor = createAuthor (Name "John Doe")
         let! createdBlog = newBlog (Title "John's blog")
         let! newPost = newBlogPost (createdBlog.Id) (newAuthor.Id) (Title "Welcome!")
-        return (newAuthor, createdBlog, newPost)
+        return newPost
     }
 
-let result =
-    simpleProgram |> BlogTesting.FastTests.interpreter
+createPostProgram |> Interpreters.Pure.interpreter
 
-let asyncResult =
-    simpleProgram
-    |> BlogTesting.AsyncTests.interpreter
-    |> Async.RunSynchronously
+createPostProgram |> Interpreters.Async.interpreter |> Async.RunSynchronously
+
+createPostProgram |> Interpreters.PrettyPrinter.interpreter
